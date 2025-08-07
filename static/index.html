@@ -1,322 +1,185 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <title>オセロAI対応</title>
+  <meta charset="UTF-8">
+  <title>Othello AI</title>
   <style>
     body {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      background-color: #0b5500;
-      font-family: "Meiryo UI", sans-serif;
-      margin: 20px;
+      font-family: sans-serif;
+      text-align: center;
     }
-    #board {
-      display: grid;
-      grid-template-columns: repeat(8, 50px);
-      grid-template-rows: repeat(8, 50px);
-      gap: 1px;
-      background-color: black;
-      padding: 5px;
-      border-radius: 8px;
-      box-shadow: 0 0 10px #004400;
-      user-select: none;
+    table {
+      margin: 20px auto;
+      border-collapse: collapse;
     }
-    .cell {
-      width: 50px;
-      height: 50px;
-      background-color: #0a7f0a;
-      border-radius: 5px;
+    td {
+      width: 40px;
+      height: 40px;
+      border: 1px solid black;
+      background-color: green;
       cursor: pointer;
-      position: relative;
-      box-sizing: border-box;
-      border: 1px solid #004400;
-      transition: background-color 0.2s ease;
     }
-    .cell:hover {
-      background-color: #0f9f0f;
-    }
-    .cell.black::after,
-    .cell.white::after {
-      content: "";
-      position: absolute;
-      top: 7px;
-      left: 7px;
-      width: 36px;
-      height: 36px;
+    .black {
+      background-color: black;
       border-radius: 50%;
-      box-shadow: 0 0 5px rgba(0,0,0,0.5);
     }
-    .cell.black::after {
-      background-color: black;
-    }
-    .cell.white::after {
+    .white {
       background-color: white;
-      border: 1px solid #000;
+      border-radius: 50%;
     }
-    #controls {
-      margin-top: 15px;
-      display: flex;
-      align-items: center;
-      gap: 15px;
-    }
-    #aiSelect {
-      font-size: 16px;
-      padding: 4px 8px;
-    }
-    #passButton {
-      font-size: 16px;
-      padding: 6px 12px;
-      cursor: pointer;
-    }
-    #status {
-      margin-top: 10px;
-      font-size: 18px;
-      color: white;
-      height: 24px;
+    #ai-status {
+      position: fixed;
+      right: 10px;
+      bottom: 10px;
+      background: #eee;
+      padding: 5px;
+      border-radius: 5px;
     }
   </style>
 </head>
 <body>
-  <div id="board"></div>
-
-  <div id="controls">
-    <label for="aiSelect" style="color:white;">AIレベル選択:</label>
-    <select id="aiSelect">
-      <option value="ai1">AI レベル 1</option>
-      <option value="ai2">AI レベル 2</option>
-      <option value="ai3">AI レベル 3</option>
-      <option value="ai4">AI レベル 4</option>
-      <option value="ai5">AI レベル 5</option>
-    </select>
-    <button id="passButton">パス</button>
-  </div>
-
-  <div id="status"></div>
+  <h1>オセロAIと対戦</h1>
+  <label for="ai-select">AIレベル選択: </label>
+  <select id="ai-select">
+    <option value="ai1">ai1</option>
+    <option value="ai2">ai2</option>
+    <option value="ai3">ai3</option>
+    <option value="ai4">ai4</option>
+    <option value="ai5">ai5</option>
+  </select>
+  <button onclick="passTurn()">パス</button>
+  <div id="message"></div>
+  <table id="board"></table>
+  <div id="ai-status">現在のAI: <span id="current-ai">ai1</span></div>
 
   <script>
-    const BOARD_SIZE = 8;
-    let board = Array.from({length: BOARD_SIZE}, () => Array(BOARD_SIZE).fill(0));
-    let currentPlayer = 1; // 1=黒(プレイヤー), -1=白(AI)
-    const apiUrl = "https://othello-ai-apk.onrender.com/predict"; // 自分のRender URLに書き換える
-    const aiSelect = document.getElementById("aiSelect");
-    const passButton = document.getElementById("passButton");
-    const statusDiv = document.getElementById("status");
+    const apiUrl = "https://othello-ai-apk.onrender.com/predict";
+    let board = Array(8).fill().map(() => Array(8).fill(0));
+    board[3][3] = board[4][4] = -1; // 白
+    board[3][4] = board[4][3] = 1;  // 黒
+    let currentPlayer = 1; // 1=プレイヤー(黒), -1=AI(白)
+    const table = document.getElementById("board");
+    const message = document.getElementById("message");
+    const aiSelect = document.getElementById("ai-select");
+    const currentAiDisplay = document.getElementById("current-ai");
 
-    function initializeBoard() {
-      for (let y = 0; y < BOARD_SIZE; y++) {
-        for (let x = 0; x < BOARD_SIZE; x++) {
-          board[y][x] = 0;
+    aiSelect.addEventListener("change", () => {
+      currentAiDisplay.textContent = aiSelect.value;
+    });
+
+    function drawBoard() {
+      table.innerHTML = "";
+      for (let y = 0; y < 8; y++) {
+        const row = table.insertRow();
+        for (let x = 0; x < 8; x++) {
+          const cell = row.insertCell();
+          if (board[y][x] === 1) cell.className = "black";
+          else if (board[y][x] === -1) cell.className = "white";
+          else cell.onclick = () => playerMove(x, y);
         }
       }
-      board[3][3] = -1;
-      board[3][4] = 1;
-      board[4][3] = 1;
-      board[4][4] = -1;
     }
 
-    function renderBoard() {
-      const boardDiv = document.getElementById("board");
-      boardDiv.innerHTML = "";
-
-      for (let y = 0; y < BOARD_SIZE; y++) {
-        for (let x = 0; x < BOARD_SIZE; x++) {
-          const cell = document.createElement("div");
-          cell.classList.add("cell");
-
-          if (board[y][x] === 1) cell.classList.add("black");
-          else if (board[y][x] === -1) cell.classList.add("white");
-
-          cell.dataset.x = x;
-          cell.dataset.y = y;
-
-          if (currentPlayer === 1 && canPlace(x, y, currentPlayer)) {
-            cell.style.cursor = "pointer";
-            cell.addEventListener("click", () => {
-              if (placePiece(x, y, currentPlayer)) {
-                currentPlayer = -1;
-                renderBoard();
-                statusDiv.textContent = "AIの手を考えています...";
-                setTimeout(aiMove, 300);
-              }
-            });
-          } else {
-            cell.style.cursor = "default";
-          }
-
-          boardDiv.appendChild(cell);
-        }
+    function passTurn() {
+      if (currentPlayer === 1) {
+        currentPlayer = -1;
+        aiMove();
       }
-      updateStatus();
     }
 
-    function canPlace(x, y, color) {
-      if (board[y][x] !== 0) return false;
-      const directions = [
-        [1,0], [-1,0], [0,1], [0,-1],
-        [1,1], [-1,-1], [1,-1], [-1,1]
-      ];
-      for (const [dx, dy] of directions) {
-        let nx = x + dx;
-        let ny = y + dy;
-        let foundOpponent = false;
-        while (nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE) {
-          if (board[ny][nx] === -color) {
-            foundOpponent = true;
-            nx += dx;
-            ny += dy;
-          } else {
-            break;
-          }
-        }
-        if (foundOpponent && nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE) {
-          if (board[ny][nx] === color) return true;
-        }
-      }
-      return false;
-    }
+    async function playerMove(x, y) {
+      if (board[y][x] !== 0 || currentPlayer !== 1) return;
+      if (!isValidMove(x, y, currentPlayer)) return;
 
-    function placePiece(x, y, color) {
-      if (!canPlace(x, y, color)) return false;
-      board[y][x] = color;
-      const directions = [
-        [1,0], [-1,0], [0,1], [0,-1],
-        [1,1], [-1,-1], [1,-1], [-1,1]
-      ];
-      for (const [dx, dy] of directions) {
-        let nx = x + dx;
-        let ny = y + dy;
-        let toFlip = [];
-        while (nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE && board[ny][nx] === -color) {
-          toFlip.push([nx, ny]);
-          nx += dx;
-          ny += dy;
-        }
-        if (nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE && board[ny][nx] === color) {
-          for (const [fx, fy] of toFlip) {
-            board[fy][fx] = color;
-          }
-        }
-      }
-      return true;
-    }
-
-    function hasValidMoves(color) {
-      for (let y = 0; y < BOARD_SIZE; y++) {
-        for (let x = 0; x < BOARD_SIZE; x++) {
-          if (canPlace(x, y, color)) return true;
-        }
-      }
-      return false;
-    }
-
-    function countStones() {
-      let black = 0, white = 0;
-      for (let y = 0; y < BOARD_SIZE; y++) {
-        for (let x = 0; x < BOARD_SIZE; x++) {
-          if (board[y][x] === 1) black++;
-          else if (board[y][x] === -1) white++;
-        }
-      }
-      return {black, white};
-    }
-
-    function updateStatus(message) {
-      if(message) {
-        statusDiv.textContent = message;
-        return;
-      }
-      const {black, white} = countStones();
-      statusDiv.textContent = `黒: ${black}  白: ${white}  現在の手番: ${currentPlayer === 1 ? "あなた" : "AI"}`;
+      applyMove(x, y, currentPlayer);
+      currentPlayer = -1;
+      drawBoard();
+      if (hasValidMoves(-1)) await aiMove();
+      else if (!hasValidMoves(1)) showResult();
     }
 
     async function aiMove() {
-      if (!hasValidMoves(-1)) {
-        if (!hasValidMoves(1)) {
-          return endGame();
-        }
-        alert("AIはパスしました。あなたの手番です。");
-        currentPlayer = 1;
-        updateStatus();
-        renderBoard();
-        return;
-      }
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          model_key: aiSelect.value,
+          board: board
+        })
+      });
+      const data = await response.json();
+      const {x, y} = data;
 
-      // APIに盤面とAIレベルを送る
-      try {
-        const response = await fetch(apiUrl, {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({
-            model_key: aiSelect.value,
-            board: board,
-          }),
-        });
-        if (!response.ok) throw new Error("API通信エラー");
-        const data = await response.json();
-        const {x, y} = data;
-        if (placePiece(x, y, -1)) {
-          currentPlayer = 1;
-          renderBoard();
-          if (!hasValidMoves(1)) {
-            if (!hasValidMoves(-1)) {
-              return endGame();
-            }
-            alert("あなたはパスしました。AIの手番です。");
-            currentPlayer = -1;
-            renderBoard();
-            setTimeout(aiMove, 500);
+      if (board[y][x] === 0 && isValidMove(x, y, -1)) {
+        applyMove(x, y, -1);
+      }
+      currentPlayer = 1;
+      drawBoard();
+
+      if (!hasValidMoves(1) && !hasValidMoves(-1)) showResult();
+    }
+
+    function isValidMove(x, y, player) {
+      if (board[y][x] !== 0) return false;
+      const directions = [-1, 0, 1];
+      for (let dx of directions) {
+        for (let dy of directions) {
+          if (dx === 0 && dy === 0) continue;
+          let nx = x + dx, ny = y + dy;
+          let hasOpponent = false;
+          while (nx >= 0 && ny >= 0 && nx < 8 && ny < 8) {
+            if (board[ny][nx] === -player) {
+              hasOpponent = true;
+            } else if (board[ny][nx] === player && hasOpponent) {
+              return true;
+            } else break;
+            nx += dx; ny += dy;
           }
-        } else {
-          alert("AIが無効な手を返しました。");
-          currentPlayer = 1;
-          updateStatus();
         }
-      } catch (e) {
-        alert("AIとの通信に失敗しました。");
-        currentPlayer = 1;
-        updateStatus();
+      }
+      return false;
+    }
+
+    function applyMove(x, y, player) {
+      board[y][x] = player;
+      const directions = [-1, 0, 1];
+      for (let dx of directions) {
+        for (let dy of directions) {
+          if (dx === 0 && dy === 0) continue;
+          let nx = x + dx, ny = y + dy;
+          let toFlip = [];
+          while (nx >= 0 && ny >= 0 && nx < 8 && ny < 8) {
+            if (board[ny][nx] === -player) {
+              toFlip.push([nx, ny]);
+            } else if (board[ny][nx] === player) {
+              for (let [fx, fy] of toFlip) board[fy][fx] = player;
+              break;
+            } else break;
+            nx += dx; ny += dy;
+          }
+        }
       }
     }
 
-    function endGame() {
-      const {black, white} = countStones();
-      if(black > white) alert(`ゲーム終了！あなたの勝ち！\n黒: ${black}  白: ${white}`);
-      else if(white > black) alert(`ゲーム終了！AIの勝ち！\n黒: ${black}  白: ${white}`);
-      else alert(`ゲーム終了！引き分け！\n黒: ${black}  白: ${white}`);
-      initializeBoard();
-      currentPlayer = 1;
-      renderBoard();
-      updateStatus();
+    function hasValidMoves(player) {
+      for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+          if (isValidMove(x, y, player)) return true;
+        }
+      }
+      return false;
     }
 
-    passButton.addEventListener("click", () => {
-      if (currentPlayer !== 1) {
-        alert("あなたの手番ではありません。");
-        return;
-      }
-      if (hasValidMoves(1)) {
-        alert("置ける場所があります。パスはできません。");
-        return;
-      }
-      alert("あなたはパスしました。AIの手番です。");
-      currentPlayer = -1;
-      renderBoard();
-      setTimeout(aiMove, 500);
-    });
+    function showResult() {
+      const flat = board.flat();
+      const black = flat.filter(v => v === 1).length;
+      const white = flat.filter(v => v === -1).length;
+      if (black > white) message.textContent = "あなたの勝ち！";
+      else if (white > black) message.textContent = "AIの勝ち！";
+      else message.textContent = "引き分け！";
+    }
 
-    aiSelect.addEventListener("change", () => {
-      // AIレベル変更時は盤面リセット
-      initializeBoard();
-      currentPlayer = 1;
-      renderBoard();
-      updateStatus("AIレベルを変更しました。ゲームをリセットしました。");
-    });
-
-    initializeBoard();
-    renderBoard();
-    updateStatus();
+    drawBoard();
   </script>
 </body>
 </html>
