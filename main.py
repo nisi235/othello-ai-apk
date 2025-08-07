@@ -47,18 +47,14 @@ def root():
 
 @app.get("/status")
 def status():
-    loaded_models = []
-    for key in sessions.keys():
-        path = model_paths.get(key, "unknown")
-        loaded_models.append({"key": key, "path": path})
     return {
         "message": "API is running",
-        "loaded_models": loaded_models
+        "loaded_models": [{"key": k, "path": model_paths[k]} for k in sessions.keys()]
     }
 
-# 石を置けるかの判定関数
+# 石を置けるかの判定関数（board[x][y]アクセスに修正）
 def can_place(board, x, y, color):
-    if board[y][x] != 0:
+    if board[x][y] != 0:
         return False
     directions = [
         (1,0), (-1,0), (0,1), (0,-1),
@@ -68,14 +64,14 @@ def can_place(board, x, y, color):
         nx, ny = x + dx, y + dy
         found_opponent = False
         while 0 <= nx < 8 and 0 <= ny < 8:
-            if board[ny][nx] == -color:
+            if board[nx][ny] == -color:
                 found_opponent = True
                 nx += dx
                 ny += dy
             else:
                 break
         if found_opponent and 0 <= nx < 8 and 0 <= ny < 8:
-            if board[ny][nx] == color:
+            if board[nx][ny] == color:
                 return True
     return False
 
@@ -85,11 +81,15 @@ async def predict_move(req: BoardRequest):
         raise HTTPException(status_code=400, detail="Invalid model_key")
 
     sess = sessions[req.model_key]
+
     board_array = np.array(req.board, dtype=np.float32)
     if board_array.shape != (8, 8):
         raise HTTPException(status_code=400, detail="Board must be 8x8")
 
-    input_tensor = board_array.reshape(1, 8, 8).astype(np.float32)
+    # 転置して (x,y) に揃える
+    board_array_xy = board_array.T
+
+    input_tensor = board_array_xy.reshape(1, 8, 8).astype(np.float32)
     inputs = {sess.get_inputs()[0].name: input_tensor}
 
     outputs = sess.run(None, inputs)
@@ -99,7 +99,7 @@ async def predict_move(req: BoardRequest):
     ai_color = -1  # 白（AI）
     for idx in sorted_indices:
         x, y = idx % 8, idx // 8
-        if can_place(board_array, x, y, color=ai_color):
+        if can_place(board_array_xy, x, y, color=ai_color):
             return {"x": int(x), "y": int(y)}
 
     return {"x": -1, "y": -1}
