@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <title>オセロAI対応</title>
   <style>
-    /* 省略：前回のCSSと同じ */
     body {
       display: flex;
       justify-content: center;
@@ -13,6 +12,8 @@
       margin: 0;
       background-color: #0b5500;
       font-family: "Meiryo UI", sans-serif;
+      flex-direction: column;
+      position: relative;
     }
     #board {
       display: grid;
@@ -56,17 +57,70 @@
       background-color: white;
       border: 1px solid #000;
     }
+    /* AI選択コンボボックス */
+    #aiSelectContainer {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      color: white;
+      font-family: "Meiryo UI", sans-serif;
+      background: rgba(0,0,0,0.3);
+      padding: 5px 10px;
+      border-radius: 5px;
+      user-select: none;
+      z-index: 100;
+    }
+    #currentAI {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      color: white;
+      font-family: "Meiryo UI", sans-serif;
+      background: rgba(0,0,0,0.3);
+      padding: 5px 10px;
+      border-radius: 5px;
+      user-select: none;
+      z-index: 100;
+    }
   </style>
 </head>
 <body>
+  <!-- AI選択 -->
+  <div id="aiSelectContainer">
+    AIレベル:
+    <select id="aiSelect">
+      <option value="ai1">AIレベル 1</option>
+      <option value="ai2">AIレベル 2</option>
+      <option value="ai3">AIレベル 3</option>
+      <option value="ai4">AIレベル 4</option>
+      <option value="ai5">AIレベル 5</option>
+    </select>
+  </div>
+
+  <!-- 現在のAI表示 -->
+  <div id="currentAI">現在のAI: AIレベル 1</div>
+
+  <!-- 盤面 -->
   <div id="board"></div>
 
   <script>
     const BOARD_SIZE = 8;
     let board = Array.from({length: BOARD_SIZE}, () => Array(BOARD_SIZE).fill(0));
+    let currentPlayer = 1; // 1: プレイヤー(黒), -1: AI(白)
 
-    // 1: 黒（プレイヤー）, -1: 白（AI）
-    let currentPlayer = 1;
+    // ここにあなたのFastAPIのpredictエンドポイントURLをセットしてください
+    const apiUrl = "https://your-render-app.onrender.com/predict";
+
+    let currentAIKey = "ai1";
+
+    const aiSelect = document.getElementById("aiSelect");
+    const currentAIText = document.getElementById("currentAI");
+
+    aiSelect.addEventListener("change", () => {
+      currentAIKey = aiSelect.value;
+      currentAIText.textContent = `現在のAI: ${aiSelect.options[aiSelect.selectedIndex].text}`;
+      resetGame();
+    });
 
     function initializeBoard() {
       for (let y = 0; y < BOARD_SIZE; y++) {
@@ -95,13 +149,12 @@
           cell.dataset.x = x;
           cell.dataset.y = y;
 
-          // プレイヤーの手番のみクリック有効
           if (currentPlayer === 1) {
             cell.addEventListener("click", () => {
               if (placePiece(x, y, currentPlayer)) {
-                currentPlayer = -currentPlayer; // AIへ交代
+                currentPlayer = -1; // AIの番
                 renderBoard();
-                setTimeout(aiMove, 500); // AIの手を少し遅らせて実行
+                setTimeout(aiMove, 500);
               } else {
                 alert("そこには置けません。");
               }
@@ -164,34 +217,61 @@
       return true;
     }
 
-    // AIは合法手の中からランダムに置く
-    function aiMove() {
-      let validMoves = [];
+    async function aiMove() {
+      // 合法手があるか
+      let hasValidMove = false;
       for (let y = 0; y < BOARD_SIZE; y++) {
         for (let x = 0; x < BOARD_SIZE; x++) {
           if (canPlace(x, y, currentPlayer)) {
-            validMoves.push([x, y]);
+            hasValidMove = true;
+            break;
           }
         }
+        if (hasValidMove) break;
       }
 
-      if (validMoves.length === 0) {
-        // AIが置ける場所なし
-        currentPlayer = -currentPlayer; // プレイヤーに交代
+      if (!hasValidMove) {
         alert("AIはパスしました。");
+        currentPlayer = 1;
         renderBoard();
         return;
       }
 
-      // ランダムに1手選ぶ
-      const [x, y] = validMoves[Math.floor(Math.random() * validMoves.length)];
-      placePiece(x, y, currentPlayer);
-      currentPlayer = -currentPlayer; // プレイヤーに交代
+      try {
+        const res = await fetch(apiUrl, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            model_key: currentAIKey,
+            board: board
+          }),
+        });
+
+        if (!res.ok) throw new Error(`APIエラー: ${res.status}`);
+
+        const data = await res.json();
+        const x = data.x;
+        const y = data.y;
+
+        if (placePiece(x, y, currentPlayer)) {
+          currentPlayer = 1;
+          renderBoard();
+        } else {
+          alert("AIが不正な手を返しました。");
+        }
+      } catch (e) {
+        alert("AIの手を取得できませんでした。\n" + e.message);
+      }
+    }
+
+    function resetGame() {
+      initializeBoard();
+      currentPlayer = 1;
       renderBoard();
     }
 
-    initializeBoard();
-    renderBoard();
+    // 初期化
+    resetGame();
   </script>
 </body>
 </html>
