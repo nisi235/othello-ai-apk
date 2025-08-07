@@ -6,14 +6,14 @@
   <style>
     body {
       display: flex;
-      justify-content: center;
+      flex-direction: column;
       align-items: center;
       height: 100vh;
       margin: 0;
       background-color: #0b5500;
       font-family: "Meiryo UI", sans-serif;
-      flex-direction: column;
-      position: relative;
+      color: white;
+      user-select: none;
     }
     #board {
       display: grid;
@@ -24,6 +24,7 @@
       padding: 5px;
       border-radius: 8px;
       box-shadow: 0 0 10px #004400;
+      margin-top: 10px;
     }
     .cell {
       width: 50px;
@@ -57,70 +58,111 @@
       background-color: white;
       border: 1px solid #000;
     }
-    /* AI選択コンボボックス */
-    #aiSelectContainer {
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      color: white;
-      font-family: "Meiryo UI", sans-serif;
-      background: rgba(0,0,0,0.3);
-      padding: 5px 10px;
-      border-radius: 5px;
-      user-select: none;
-      z-index: 100;
+
+    #controls {
+      margin-top: 20px;
+      width: 420px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
+
+    #aiSelect {
+      font-size: 16px;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
     #currentAI {
-      position: fixed;
-      bottom: 10px;
-      right: 10px;
-      color: white;
-      font-family: "Meiryo UI", sans-serif;
+      font-size: 14px;
       background: rgba(0,0,0,0.3);
-      padding: 5px 10px;
-      border-radius: 5px;
+      padding: 6px 10px;
+      border-radius: 4px;
+      min-width: 140px;
+      text-align: center;
+    }
+
+    #passButton {
+      margin-top: 15px;
+      padding: 8px 20px;
+      font-size: 16px;
+      border-radius: 6px;
+      background-color: #004400;
+      color: white;
+      border: none;
+      cursor: pointer;
       user-select: none;
-      z-index: 100;
+      transition: background-color 0.3s ease;
+    }
+    #passButton:hover:not(:disabled) {
+      background-color: #006600;
+    }
+    #passButton:disabled {
+      background-color: #003300;
+      cursor: default;
+      opacity: 0.5;
     }
   </style>
 </head>
 <body>
-  <!-- AI選択 -->
-  <div id="aiSelectContainer">
-    AIレベル:
+  <h1>オセロAI 対戦</h1>
+
+  <div id="board"></div>
+
+  <div id="controls">
+    <label for="aiSelect">AIモデル選択:</label>
     <select id="aiSelect">
-      <option value="ai1">AIレベル 1</option>
-      <option value="ai2">AIレベル 2</option>
-      <option value="ai3">AIレベル 3</option>
-      <option value="ai4">AIレベル 4</option>
-      <option value="ai5">AIレベル 5</option>
+      <option value="ai1">AI レベル 1</option>
+      <option value="ai2">AI レベル 2</option>
+      <option value="ai3">AI レベル 3</option>
+      <option value="ai4">AI レベル 4</option>
+      <option value="ai5">AI レベル 5</option>
     </select>
+
+    <div id="currentAI">現在のAI: AI レベル 1</div>
   </div>
 
-  <!-- 現在のAI表示 -->
-  <div id="currentAI">現在のAI: AIレベル 1</div>
-
-  <!-- 盤面 -->
-  <div id="board"></div>
+  <button id="passButton" disabled>パス</button>
 
   <script>
     const BOARD_SIZE = 8;
     let board = Array.from({length: BOARD_SIZE}, () => Array(BOARD_SIZE).fill(0));
-    let currentPlayer = 1; // 1: プレイヤー(黒), -1: AI(白)
+    let currentPlayer = 1; // 1: 黒(プレイヤー), -1: 白(AI)
+    let aiSelect = document.getElementById("aiSelect");
+    let currentAILabel = document.getElementById("currentAI");
+    let passButton = document.getElementById("passButton");
 
-    // ここにあなたのFastAPIのpredictエンドポイントURLをセットしてください
-    const apiUrl = "https://your-render-app.onrender.com/predict";
+    let gameOver = false;
 
-    let currentAIKey = "ai1";
-
-    const aiSelect = document.getElementById("aiSelect");
-    const currentAIText = document.getElementById("currentAI");
+    let selectedAIKey = aiSelect.value;
 
     aiSelect.addEventListener("change", () => {
-      currentAIKey = aiSelect.value;
-      currentAIText.textContent = `現在のAI: ${aiSelect.options[aiSelect.selectedIndex].text}`;
+      selectedAIKey = aiSelect.value;
+      currentAILabel.textContent = `現在のAI: ${aiSelect.options[aiSelect.selectedIndex].text}`;
       resetGame();
     });
+
+    passButton.addEventListener("click", () => {
+      if (gameOver) return;
+      if (currentPlayer !== 1) return; // プレイヤーターンのみ
+      if (!hasAnyValidMove(currentPlayer)) {
+        alert("パスしました。AIの手番です。");
+        currentPlayer = -currentPlayer;
+        updatePassButton();
+        renderBoard();
+        setTimeout(aiMove, 500);
+      } else {
+        alert("まだ置ける場所があります。パスできません。");
+      }
+    });
+
+    function resetGame() {
+      gameOver = false;
+      currentPlayer = 1;
+      initializeBoard();
+      renderBoard();
+      updatePassButton();
+    }
 
     function initializeBoard() {
       for (let y = 0; y < BOARD_SIZE; y++) {
@@ -149,11 +191,13 @@
           cell.dataset.x = x;
           cell.dataset.y = y;
 
-          if (currentPlayer === 1) {
+          // ゲームオーバー時やAIターンはクリック禁止
+          if (!gameOver && currentPlayer === 1) {
             cell.addEventListener("click", () => {
               if (placePiece(x, y, currentPlayer)) {
-                currentPlayer = -1; // AIの番
+                currentPlayer = -currentPlayer;
                 renderBoard();
+                updatePassButton();
                 setTimeout(aiMove, 500);
               } else {
                 alert("そこには置けません。");
@@ -192,6 +236,15 @@
       return false;
     }
 
+    function hasAnyValidMove(color) {
+      for (let y = 0; y < BOARD_SIZE; y++) {
+        for (let x = 0; x < BOARD_SIZE; x++) {
+          if (canPlace(x, y, color)) return true;
+        }
+      }
+      return false;
+    }
+
     function placePiece(x, y, color) {
       if (!canPlace(x, y, color)) return false;
       board[y][x] = color;
@@ -218,60 +271,89 @@
     }
 
     async function aiMove() {
-      // 合法手があるか
-      let hasValidMove = false;
-      for (let y = 0; y < BOARD_SIZE; y++) {
-        for (let x = 0; x < BOARD_SIZE; x++) {
-          if (canPlace(x, y, currentPlayer)) {
-            hasValidMove = true;
-            break;
-          }
-        }
-        if (hasValidMove) break;
-      }
+      if (gameOver) return;
 
-      if (!hasValidMove) {
-        alert("AIはパスしました。");
-        currentPlayer = 1;
+      if (!hasAnyValidMove(currentPlayer)) {
+        alert("AIは置ける場所がありません。あなたの手番です。");
+        currentPlayer = -currentPlayer;
+        updatePassButton();
         renderBoard();
+        checkGameEnd();
         return;
       }
 
       try {
-        const res = await fetch(apiUrl, {
+        const res = await fetch("https://othello-ai-apk.onrender.com/predict", {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
+          headers: {
+            "Content-Type": "application/json"
+          },
           body: JSON.stringify({
-            model_key: currentAIKey,
+            model_key: selectedAIKey,
             board: board
-          }),
+          })
         });
 
-        if (!res.ok) throw new Error(`APIエラー: ${res.status}`);
+        if (!res.ok) {
+          alert("AIの応答に失敗しました。");
+          return;
+        }
 
         const data = await res.json();
-        const x = data.x;
-        const y = data.y;
+        const { x, y } = data;
 
-        if (placePiece(x, y, currentPlayer)) {
-          currentPlayer = 1;
-          renderBoard();
-        } else {
+        if (!canPlace(x, y, currentPlayer)) {
           alert("AIが不正な手を返しました。");
+          return;
         }
+
+        placePiece(x, y, currentPlayer);
+        currentPlayer = -currentPlayer;
+        renderBoard();
+        updatePassButton();
+
+        checkGameEnd();
+
       } catch (e) {
-        alert("AIの手を取得できませんでした。\n" + e.message);
+        alert("通信エラーが発生しました: " + e.message);
       }
     }
 
-    function resetGame() {
-      initializeBoard();
-      currentPlayer = 1;
-      renderBoard();
+    function countPieces() {
+      let black = 0, white = 0;
+      for (let y = 0; y < BOARD_SIZE; y++) {
+        for (let x = 0; x < BOARD_SIZE; x++) {
+          if (board[y][x] === 1) black++;
+          else if (board[y][x] === -1) white++;
+        }
+      }
+      return { black, white };
+    }
+
+    function checkGameEnd() {
+      // どちらも置けないならゲーム終了
+      if (!hasAnyValidMove(1) && !hasAnyValidMove(-1)) {
+        gameOver = true;
+        passButton.disabled = true;
+
+        const { black, white } = countPieces();
+        let msg = `ゲーム終了！\n黒(あなた): ${black} 石\n白(AI): ${white} 石\n\n`;
+        if (black > white) msg += "あなたの勝ちです！ 🎉";
+        else if (white > black) msg += "AIの勝ちです...";
+        else msg += "引き分けです。";
+
+        alert(msg);
+      }
+    }
+
+    function updatePassButton() {
+      // プレイヤーの手番かつ置ける場所がない場合のみ有効
+      passButton.disabled = !(currentPlayer === 1 && !hasAnyValidMove(1) && !gameOver);
     }
 
     // 初期化
     resetGame();
+
   </script>
 </body>
 </html>
