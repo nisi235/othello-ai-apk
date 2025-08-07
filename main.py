@@ -6,10 +6,16 @@ import onnxruntime as ort
 
 app = FastAPI()
 
-# CORS設定（JSからAPIを呼べるように）
+# CORS設定（GitHub PagesのURLに合わせてください）
+origins = [
+    "https://yourusername.github.io",
+    "https://yourusername.github.io/yourrepo",
+    "*",  # テスト段階はワイルドカードでも可、本番は限定してください
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 必要に応じて限定してください
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -28,11 +34,11 @@ for key, path in model_paths.items():
     sessions[key] = ort.InferenceSession(path)
 
 class BoardRequest(BaseModel):
-    model_key: str  # "ai1"～"ai5"
-    board: list[list[int]]  # 8x8の盤面 (1:黒, -1:白, 0:空)
+    model_key: str  # ai1 ~ ai5
+    board: list[list[int]]  # 8x8
 
 @app.post("/predict")
-async def predict_next_move(req: BoardRequest):
+async def predict_move(req: BoardRequest):
     if req.model_key not in sessions:
         raise HTTPException(status_code=400, detail="Invalid model_key")
 
