@@ -47,9 +47,13 @@ def root():
 
 @app.get("/status")
 def status():
+    loaded_models = []
+    for key in sessions.keys():
+        path = model_paths.get(key, "unknown")
+        loaded_models.append({"key": key, "path": path})
     return {
         "message": "API is running",
-        "loaded_models": list(sessions.keys())
+        "loaded_models": loaded_models
     }
 
 # 石を置けるかの判定関数
