@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>オセロAI対応</title>
+  <style>
+    /* 省略：前回のCSSと同じ */
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      background-color: #0b5500;
+      font-family: "Meiryo UI", sans-serif;
+    }
+    #board {
+      display: grid;
+      grid-template-columns: repeat(8, 50px);
+      grid-template-rows: repeat(8, 50px);
+      gap: 1px;
+      background-color: black;
+      padding: 5px;
+      border-radius: 8px;
+      box-shadow: 0 0 10px #004400;
+    }
+    .cell {
+      width: 50px;
+      height: 50px;
+      background-color: #0a7f0a;
+      border-radius: 5px;
+      cursor: pointer;
+      position: relative;
+      box-sizing: border-box;
+      border: 1px solid #004400;
+      transition: background-color 0.2s ease;
+    }
+    .cell:hover {
+      background-color: #0f9f0f;
+    }
+    .cell.black::after,
+    .cell.white::after {
+      content: "";
+      position: absolute;
+      top: 7px;
+      left: 7px;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      box-shadow: 0 0 5px rgba(0,0,0,0.5);
+    }
+    .cell.black::after {
+      background-color: black;
+    }
+    .cell.white::after {
+      background-color: white;
+      border: 1px solid #000;
+    }
+  </style>
+</head>
+<body>
+  <div id="board"></div>
+
+  <script>
+    const BOARD_SIZE = 8;
+    let board = Array.from({length: BOARD_SIZE}, () => Array(BOARD_SIZE).fill(0));
+
+    // 1: 黒（プレイヤー）, -1: 白（AI）
+    let currentPlayer = 1;
+
+    function initializeBoard() {
+      for (let y = 0; y < BOARD_SIZE; y++) {
+        for (let x = 0; x < BOARD_SIZE; x++) {
+          board[y][x] = 0;
+        }
+      }
+      board[3][3] = -1;
+      board[3][4] = 1;
+      board[4][3] = 1;
+      board[4][4] = -1;
+    }
+
+    function renderBoard() {
+      const boardDiv = document.getElementById("board");
+      boardDiv.innerHTML = "";
+
+      for (let y = 0; y < BOARD_SIZE; y++) {
+        for (let x = 0; x < BOARD_SIZE; x++) {
+          const cell = document.createElement("div");
+          cell.classList.add("cell");
+
+          if (board[y][x] === 1) cell.classList.add("black");
+          else if (board[y][x] === -1) cell.classList.add("white");
+
+          cell.dataset.x = x;
+          cell.dataset.y = y;
+
+          // プレイヤーの手番のみクリック有効
+          if (currentPlayer === 1) {
+            cell.addEventListener("click", () => {
+              if (placePiece(x, y, currentPlayer)) {
+                currentPlayer = -currentPlayer; // AIへ交代
+                renderBoard();
+                setTimeout(aiMove, 500); // AIの手を少し遅らせて実行
+              } else {
+                alert("そこには置けません。");
+              }
+            });
+          }
+
+          boardDiv.appendChild(cell);
+        }
+      }
+    }
+
+    function canPlace(x, y, color) {
+      if (board[y][x] !== 0) return false;
+      const directions = [
+        [1,0], [-1,0], [0,1], [0,-1],
+        [1,1], [-1,-1], [1,-1], [-1,1]
+      ];
+      for (const [dx, dy] of directions) {
+        let nx = x + dx;
+        let ny = y + dy;
+        let foundOpponent = false;
+        while (nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE) {
+          if (board[ny][nx] === -color) {
+            foundOpponent = true;
+            nx += dx;
+            ny += dy;
+          } else {
+            break;
+          }
+        }
+        if (foundOpponent && nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE) {
+          if (board[ny][nx] === color) return true;
+        }
+      }
+      return false;
+    }
+
+    function placePiece(x, y, color) {
+      if (!canPlace(x, y, color)) return false;
+      board[y][x] = color;
+      const directions = [
+        [1,0], [-1,0], [0,1], [0,-1],
+        [1,1], [-1,-1], [1,-1], [-1,1]
+      ];
+      for (const [dx, dy] of directions) {
+        let nx = x + dx;
+        let ny = y + dy;
+        let toFlip = [];
+        while (nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE && board[ny][nx] === -color) {
+          toFlip.push([nx, ny]);
+          nx += dx;
+          ny += dy;
+        }
+        if (nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE && board[ny][nx] === color) {
+          for (const [fx, fy] of toFlip) {
+            board[fy][fx] = color;
+          }
+        }
+      }
+      return true;
+    }
+
+    // AIは合法手の中からランダムに置く
+    function aiMove() {
+      let validMoves = [];
+      for (let y = 0; y < BOARD_SIZE; y++) {
+        for (let x = 0; x < BOARD_SIZE; x++) {
+          if (canPlace(x, y, currentPlayer)) {
+            validMoves.push([x, y]);
+          }
+        }
+      }
+
+      if (validMoves.length === 0) {
+        // AIが置ける場所なし
+        currentPlayer = -currentPlayer; // プレイヤーに交代
+        alert("AIはパスしました。");
+        renderBoard();
+        return;
+      }
+
+      // ランダムに1手選ぶ
+      const [x, y] = validMoves[Math.floor(Math.random() * validMoves.length)];
+      placePiece(x, y, currentPlayer);
+      currentPlayer = -currentPlayer; // プレイヤーに交代
+      renderBoard();
+    }
+
+    initializeBoard();
+    renderBoard();
+  </script>
+</body>
+</html>
