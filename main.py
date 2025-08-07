@@ -1,9 +1,19 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import numpy as np
 import onnxruntime as ort
 
 app = FastAPI()
+
+# CORS設定（JSからAPIを呼べるように）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 必要に応じて限定してください
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 model_paths = {
     "ai1": "models/othello_ai1.onnx",
@@ -19,11 +29,7 @@ for key, path in model_paths.items():
 
 class BoardRequest(BaseModel):
     model_key: str  # "ai1"～"ai5"
-    board: list[list[int]]  # 8x8の盤面
-
-@app.get("/")
-async def root():
-    return {"message": "Othello AI API is running."}
+    board: list[list[int]]  # 8x8の盤面 (1:黒, -1:白, 0:空)
 
 @app.post("/predict")
 async def predict_next_move(req: BoardRequest):
