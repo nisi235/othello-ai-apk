@@ -11,8 +11,6 @@
       background-color: #0b5500;
       font-family: "Meiryo UI", sans-serif;
       margin: 20px;
-      color: white;
-      user-select: none;
     }
     #board {
       display: grid;
@@ -23,6 +21,7 @@
       padding: 5px;
       border-radius: 8px;
       box-shadow: 0 0 10px #004400;
+      user-select: none;
     }
     .cell {
       width: 50px;
@@ -74,12 +73,12 @@
     #status {
       margin-top: 10px;
       font-size: 18px;
+      color: white;
       height: 24px;
     }
   </style>
 </head>
 <body>
-  <h1>オセロAI対戦</h1>
   <div id="board"></div>
 
   <div id="controls">
@@ -100,7 +99,7 @@
     const BOARD_SIZE = 8;
     let board = Array.from({length: BOARD_SIZE}, () => Array(BOARD_SIZE).fill(0));
     let currentPlayer = 1; // 1=黒(プレイヤー), -1=白(AI)
-    const apiUrl = "https://othello-ai-apk.onrender.com/predict"; // あなたのRenderのURLに変更してください
+    const apiUrl = "https://othello-ai-apk.onrender.com/predict"; // 自分のRender URLに書き換える
     const aiSelect = document.getElementById("aiSelect");
     const passButton = document.getElementById("passButton");
     const statusDiv = document.getElementById("status");
@@ -256,6 +255,16 @@
         if (!response.ok) throw new Error("API通信エラー");
         const data = await response.json();
         const {x, y} = data;
+
+        if (x === -1 && y === -1) {
+          // AIパス
+          alert("AIはパスしました。あなたの手番です。");
+          currentPlayer = 1;
+          renderBoard();
+          updateStatus();
+          return;
+        }
+
         if (placePiece(x, y, -1)) {
           currentPlayer = 1;
           renderBoard();
@@ -282,15 +291,12 @@
 
     function endGame() {
       const {black, white} = countStones();
-      let message = "";
-      if (black > white) {
-        message = `ゲーム終了！あなたの勝ち！\n黒: ${black}  白: ${white}`;
-      } else if (white > black) {
-        message = `ゲーム終了！AIの勝ち！\n黒: ${black}  白: ${white}`;
-      } else {
-        message = `ゲーム終了！引き分け！\n黒: ${black}  白: ${white}`;
-      }
-      alert(message);
+      let msg = `ゲーム終了！\n黒(あなた): ${black}  白(AI): ${white}\n\n`;
+      if (black > white) msg += "あなたの勝ちです！ 🎉";
+      else if (white > black) msg += "AIの勝ちです...";
+      else msg += "引き分けです。";
+
+      alert(msg);
       initializeBoard();
       currentPlayer = 1;
       renderBoard();
