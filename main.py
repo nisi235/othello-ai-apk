@@ -6,11 +6,10 @@ import onnxruntime as ort
 
 app = FastAPI()
 
-# CORS設定（GitHub PagesのURLに合わせてください）
+# CORS設定（GitHub PagesのURL）
 origins = [
     "https://nisi235.github.io",
-    "https://nisi235.github.io/othello-ai-apk",
-    "*",  # テスト段階はワイルドカードでも可、本番は限定してください
+    "https://nisi235.github.io/othello-ai-apk"
 ]
 
 app.add_middleware(
@@ -21,6 +20,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# モデル読み込み
 model_paths = {
     "ai1": "models/othello_ai1.onnx",
     "ai2": "models/othello_ai2.onnx",
@@ -36,9 +36,10 @@ for key, path in model_paths.items():
     except Exception as e:
         print(f"モデル読み込み失敗: {key}, {path}, {e}")
 
+# リクエスト形式
 class BoardRequest(BaseModel):
-    model_key: str  # ai1 ~ ai5
-    board: list[list[int]]  # 8x8
+    model_key: str
+    board: list[list[int]]
 
 @app.get("/")
 def root():
@@ -51,6 +52,7 @@ def status():
         "loaded_models": list(sessions.keys())
     }
 
+# 石を置けるかの判定関数
 def can_place(board, x, y, color):
     if board[y][x] != 0:
         return False
@@ -89,13 +91,11 @@ async def predict_move(req: BoardRequest):
     outputs = sess.run(None, inputs)
     scores = outputs[0].flatten()
 
-    # スコアの高い順に置ける場所を探す
     sorted_indices = np.argsort(scores)[::-1]
+    ai_color = -1  # 白（AI）
     for idx in sorted_indices:
         x, y = idx % 8, idx // 8
-        # AIの色は-1（白）
-        if can_place(board_array, x, y, color=-1):
-            return {"x": x, "y": y}
+        if can_place(board_array, x, y, color=ai_color):
+            return {"x": int(x), "y": int(y)}
 
-    # 置ける場所がなければパスとして(-1, -1)を返す
     return {"x": -1, "y": -1}
