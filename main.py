@@ -51,6 +51,28 @@ def status():
         "loaded_models": list(sessions.keys())
     }
 
+def can_place(board, x, y, color):
+    if board[y][x] != 0:
+        return False
+    directions = [
+        (1,0), (-1,0), (0,1), (0,-1),
+        (1,1), (-1,-1), (1,-1), (-1,1)
+    ]
+    for dx, dy in directions:
+        nx, ny = x + dx, y + dy
+        found_opponent = False
+        while 0 <= nx < 8 and 0 <= ny < 8:
+            if board[ny][nx] == -color:
+                found_opponent = True
+                nx += dx
+                ny += dy
+            else:
+                break
+        if found_opponent and 0 <= nx < 8 and 0 <= ny < 8:
+            if board[ny][nx] == color:
+                return True
+    return False
+
 @app.post("/predict")
 async def predict_move(req: BoardRequest):
     if req.model_key not in sessions:
@@ -67,7 +89,13 @@ async def predict_move(req: BoardRequest):
     outputs = sess.run(None, inputs)
     scores = outputs[0].flatten()
 
-    best_move_index = int(np.argmax(scores))
-    x, y = best_move_index % 8, best_move_index // 8
+    # スコアの高い順に置ける場所を探す
+    sorted_indices = np.argsort(scores)[::-1]
+    for idx in sorted_indices:
+        x, y = idx % 8, idx // 8
+        # AIの色は-1（白）
+        if can_place(board_array, x, y, color=-1):
+            return {"x": x, "y": y}
 
-    return {"x": x, "y": y}
+    # 置ける場所がなければパスとして(-1, -1)を返す
+    return {"x": -1, "y": -1}
