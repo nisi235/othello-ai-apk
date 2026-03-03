@@ -27,6 +27,8 @@ model_paths = {
     "ai3": "models/othello_ai3.onnx",
     "ai4": "models/othello_ai4.onnx",
     "ai5": "models/othello_ai5.onnx",
+    "ai6": "models/othello_ai6.onnx",
+    "ai7": "models/othello_ai7.onnx",
 }
 
 sessions = {}
@@ -103,3 +105,4 @@ async def predict_move(req: BoardRequest):
             return {"x": int(x), "y": int(y)}
 
     return {"x": -1, "y": -1}
+
