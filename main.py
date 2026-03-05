@@ -133,8 +133,11 @@ async def predict_move(req: BoardRequest):
 
         for idx in sorted_indices:
 
-            x = idx % 8
-            y = idx // 8
+        y = idx % 8
+        x = idx // 8
+
+        if can_place(board_array_xy, x, y, ai_color):
+            return {"x": int(x), "y": int(y)}
 
             if can_place(board_array_xy, x, y, ai_color):
                 return {"x": int(x), "y": int(y)}
@@ -148,5 +151,6 @@ async def predict_move(req: BoardRequest):
         return {
             "error": str(e)
         }
+
 
 
