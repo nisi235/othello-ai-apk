@@ -118,15 +118,14 @@ async def predict_move(req: BoardRequest):
         if board_array.shape != (8, 8):
             raise HTTPException(status_code=400, detail="Board must be 8x8")
 
-        # 転置
         board_array_xy = board_array.T
 
-        input_tensor = board_array_xy.reshape(1, 8, 8).astype(np.float32)
+　　　　　# ここを修正
+　　　　 input_tensor = board_array_xy.flatten().reshape(1, 64).astype(np.float32)
 
         inputs = {sess.get_inputs()[0].name: input_tensor}
 
         outputs = sess.run(None, inputs)
-
         scores = outputs[0].flatten()
 
         sorted_indices = np.argsort(scores)[::-1]
@@ -150,3 +149,4 @@ async def predict_move(req: BoardRequest):
         return {
             "error": str(e)
         }
+
