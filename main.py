@@ -6,7 +6,7 @@ import onnxruntime as ort
 
 app = FastAPI()
 
-# CORS設定（GitHub PagesのURL）
+# CORS設定
 origins = [
     "https://nisi235.github.io",
     "https://nisi235.github.io/othello-ai-apk"
@@ -14,7 +14,7 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # 一旦全部許可（確実に動かす）
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -105,4 +105,5 @@ async def predict_move(req: BoardRequest):
             return {"x": int(x), "y": int(y)}
 
     return {"x": -1, "y": -1}
+
 
