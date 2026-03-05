@@ -16,7 +16,7 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # 動作確認用（全部許可）
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -120,24 +120,32 @@ async def predict_move(req: BoardRequest):
 
         board_array_xy = board_array.T
 
-         # ここを修正
-        input_tensor = board_array_xy.flatten().reshape(1, 64).astype(np.float32)
+        ai_color = -1
+
+        # =============================
+        # AI6用 67入力作成
+        # =============================
+        flat_board = (board_array_xy * ai_color).flatten()
+
+        piece_diff = np.sum(board_array_xy == ai_color) - np.sum(board_array_xy == -ai_color)
+        pos_score = 0
+        corner_score = 0
+
+        features = np.array([piece_diff, pos_score, corner_score], dtype=np.float32)
+
+        input_tensor = np.concatenate([flat_board, features]).reshape(1, 67).astype(np.float32)
 
         inputs = {sess.get_inputs()[0].name: input_tensor}
 
         outputs = sess.run(None, inputs)
+
         scores = outputs[0].flatten()
         sorted_indices = np.argsort(scores)[::-1]
-
-        ai_color = -1
 
         for idx in sorted_indices:
 
             y = idx % 8
             x = idx // 8
-
-            if can_place(board_array_xy, x, y, ai_color):
-                return {"x": int(x), "y": int(y)}
 
             if can_place(board_array_xy, x, y, ai_color):
                 return {"x": int(x), "y": int(y)}
@@ -151,7 +159,3 @@ async def predict_move(req: BoardRequest):
         return {
             "error": str(e)
         }
-
-
-
-
