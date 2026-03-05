@@ -122,19 +122,32 @@ async def predict_move(req: BoardRequest):
 
         ai_color = -1
 
-        # =============================
-        # AI6用 67入力作成
-        # =============================
-        flat_board = (board_array_xy * ai_color).flatten()
+# =============================
+# 入力作成
+# =============================
 
-        piece_diff = np.sum(board_array_xy == ai_color) - np.sum(board_array_xy == -ai_color)
-        pos_score = 0
-        corner_score = 0
+flat_board = (board_array_xy * ai_color).flatten()
 
-        features = np.array([piece_diff, pos_score, corner_score], dtype=np.float32)
+input_size = sess.get_inputs()[0].shape[1]
 
-        input_tensor = np.concatenate([flat_board, features]).reshape(1, 67).astype(np.float32)
+# ---- 64入力AI ----
+if input_size == 64:
 
+    input_tensor = flat_board.reshape(1,64).astype(np.float32)
+
+# ---- 67入力AI ----
+elif input_size == 67:
+
+    piece_diff = np.sum(board_array_xy == ai_color) - np.sum(board_array_xy == -ai_color)
+    pos_score = 0
+    corner_score = 0
+
+    features = np.array([piece_diff, pos_score, corner_score], dtype=np.float32)
+
+    input_tensor = np.concatenate([flat_board, features]).reshape(1,67).astype(np.float32)
+
+else:
+    raise Exception("Unknown model input size")
         inputs = {sess.get_inputs()[0].name: input_tensor}
 
         outputs = sess.run(None, inputs)
@@ -159,3 +172,4 @@ async def predict_move(req: BoardRequest):
         return {
             "error": str(e)
         }
+
