@@ -72,6 +72,7 @@ def status():
 # 石を置けるか判定
 # =============================
 def can_place(board, x, y, color):
+
     if board[x][y] != 0:
         return False
 
@@ -81,20 +82,18 @@ def can_place(board, x, y, color):
     ]
 
     for dx, dy in directions:
-        nx, ny = x + dx, y + dy
-        found_opponent = False
 
-        while 0 <= nx < 8 and 0 <= ny < 8:
-            if board[nx][ny] == -color:
-                found_opponent = True
-                nx += dx
-                ny += dy
-            else:
-                break
+        nx = x + dx
+        ny = y + dy
+        found = False
 
-        if found_opponent and 0 <= nx < 8 and 0 <= ny < 8:
-            if board[nx][ny] == color:
-                return True
+        while 0 <= nx < 8 and 0 <= ny < 8 and board[nx][ny] == -color:
+            nx += dx
+            ny += dy
+            found = True
+
+        if found and 0 <= nx < 8 and 0 <= ny < 8 and board[nx][ny] == color:
+            return True
 
     return False
 
@@ -106,8 +105,6 @@ async def predict_move(req: BoardRequest):
 
     try:
 
-        print("predict request:", req.model_key)
-
         if req.model_key not in sessions:
             raise HTTPException(status_code=400, detail="Invalid model_key")
 
@@ -115,39 +112,42 @@ async def predict_move(req: BoardRequest):
 
         board_array = np.array(req.board, dtype=np.float32)
 
-        if board_array.shape != (8, 8):
+        if board_array.shape != (8,8):
             raise HTTPException(status_code=400, detail="Board must be 8x8")
 
         board_array_xy = board_array.T
-
         ai_color = -1
 
-# =============================
-# 入力作成
-# =============================
+        # =============================
+        # 入力作成
+        # =============================
 
-flat_board = (board_array_xy * ai_color).flatten()
+        flat_board = (board_array_xy * ai_color).flatten()
 
-input_size = sess.get_inputs()[0].shape[1]
+        input_size = sess.get_inputs()[0].shape[1]
 
-# ---- 64入力AI ----
-if input_size == 64:
+        # ---- 64入力AI ----
+        if input_size == 64:
 
-    input_tensor = flat_board.reshape(1,64).astype(np.float32)
+            input_tensor = flat_board.reshape(1,64).astype(np.float32)
 
-# ---- 67入力AI ----
-elif input_size == 67:
+        # ---- 67入力AI ----
+        elif input_size == 67:
 
-    piece_diff = np.sum(board_array_xy == ai_color) - np.sum(board_array_xy == -ai_color)
-    pos_score = 0
-    corner_score = 0
+            piece_diff = np.sum(board_array_xy == ai_color) - np.sum(board_array_xy == -ai_color)
+            pos_score = 0
+            corner_score = 0
 
-    features = np.array([piece_diff, pos_score, corner_score], dtype=np.float32)
+            features = np.array(
+                [piece_diff, pos_score, corner_score],
+                dtype=np.float32
+            )
 
-    input_tensor = np.concatenate([flat_board, features]).reshape(1,67).astype(np.float32)
+            input_tensor = np.concatenate([flat_board, features]).reshape(1,67).astype(np.float32)
 
-else:
-    raise Exception("Unknown model input size")
+        else:
+            raise Exception("Unknown model input size")
+
         inputs = {sess.get_inputs()[0].name: input_tensor}
 
         outputs = sess.run(None, inputs)
@@ -169,7 +169,4 @@ else:
 
         print("predict error:", e)
 
-        return {
-            "error": str(e)
-        }
-
+        return {"error": str(e)}
