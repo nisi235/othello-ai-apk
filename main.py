@@ -120,14 +120,13 @@ async def predict_move(req: BoardRequest):
 
         board_array_xy = board_array.T
 
-　　　　　# ここを修正
-　　　　 input_tensor = board_array_xy.flatten().reshape(1, 64).astype(np.float32)
+         # ここを修正
+        input_tensor = board_array_xy.flatten().reshape(1, 64).astype(np.float32)
 
         inputs = {sess.get_inputs()[0].name: input_tensor}
 
         outputs = sess.run(None, inputs)
         scores = outputs[0].flatten()
-
         sorted_indices = np.argsort(scores)[::-1]
 
         ai_color = -1
@@ -149,4 +148,5 @@ async def predict_move(req: BoardRequest):
         return {
             "error": str(e)
         }
+
 
