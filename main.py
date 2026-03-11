@@ -1,9 +1,17 @@
+import logging
+import os
+import numpy as np
+import onnxruntime as ort
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import numpy as np
-import onnxruntime as ort
-import os
+
+# ===============================
+# ログ設定（Renderログに表示）
+# ===============================
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("othello-ai")
 
 app = FastAPI()
 
@@ -20,40 +28,52 @@ MODEL_DIR = "models"
 sessions = {}
 model_shapes = {}
 
+# ===============================
+# モデル読み込み
+# ===============================
+
 if not os.path.exists(MODEL_DIR):
     os.makedirs(MODEL_DIR)
 
-print("=== モデル読み込み開始 ===")
+logger.info("=== モデル読み込み開始 ===")
 
 for filename in os.listdir(MODEL_DIR):
 
     if filename.endswith(".onnx"):
 
-        key = filename.replace(".onnx","")
-        path = os.path.join(MODEL_DIR,filename)
+        key = filename.replace(".onnx", "")
+        path = os.path.join(MODEL_DIR, filename)
 
         try:
 
-            sess = ort.InferenceSession(path)
+            logger.info(f"読み込み中: {filename}")
+
+            sess = ort.InferenceSession(
+                path,
+                providers=["CPUExecutionProvider"]
+            )
 
             shape = sess.get_inputs()[0].shape
 
             sessions[key] = sess
             model_shapes[key] = shape
 
-            print(f"[成功] {key} 入力shape={shape}")
+            logger.info(f"[成功] {key} shape={shape}")
 
         except Exception as e:
 
-            print(f"[失敗] {filename} エラー {e}")
+            logger.error(f"[失敗] {filename} エラー={e}")
 
-print("=== モデル読み込み完了 ===")
+logger.info("=== モデル読み込み完了 ===")
 
+
+# ===============================
+# API入力
+# ===============================
 
 class BoardRequest(BaseModel):
-
-    model_key : str
-    board : list[list[int]]
+    model_key: str
+    board: list[list[int]]
 
 
 DIR = [
@@ -62,6 +82,10 @@ DIR = [
 (1,-1),(1,0),(1,1)
 ]
 
+
+# ===============================
+# オセロ合法手判定
+# ===============================
 
 def can_place(board,x,y,color):
 
@@ -87,6 +111,10 @@ def can_place(board,x,y,color):
 
     return False
 
+
+# ===============================
+# 追加特徴量
+# ===============================
 
 def extract_extra_features(board,ai):
 
@@ -114,29 +142,39 @@ def extract_extra_features(board,ai):
     return np.array([piece_diff,pos_score,corner_score],dtype=np.float32)
 
 
+# ===============================
+# AI予測
+# ===============================
+
 @app.post("/predict")
 
 async def predict_move(req:BoardRequest):
 
     try:
 
-        key = req.model_key
+        logger.info(f"predict呼び出し model={req.model_key}")
 
-        if key not in sessions:
+        if req.model_key not in sessions:
+
+            logger.error("モデルが存在しません")
             raise HTTPException(status_code=400,detail="モデルがありません")
 
-        sess = sessions[key]
-
-        shape = model_shapes[key]
-
         board = np.array(req.board,dtype=np.float32)
+
+        if board.shape != (8,8):
+
+            logger.error(f"盤面サイズエラー {board.shape}")
+            raise HTTPException(status_code=400,detail="盤面は8x8必要")
+
+        sess = sessions[req.model_key]
+        shape = model_shapes[req.model_key]
 
         ai_color = -1
 
         flat = (board * ai_color).flatten()
 
         # =========================
-        # 入力形式自動判定
+        # 入力自動判定
         # =========================
 
         if len(shape)==2 and shape[1]==64:
@@ -155,13 +193,15 @@ async def predict_move(req:BoardRequest):
 
         else:
 
+            logger.error(f"未対応shape {shape}")
             raise Exception(f"未対応入力shape {shape}")
 
-        outputs = sess.run(None,{sess.get_inputs()[0].name:input_tensor.astype(np.float32)})
+        outputs = sess.run(
+            None,
+            {sess.get_inputs()[0].name:input_tensor.astype(np.float32)}
+        )
 
         scores = outputs[0].flatten()
-
-        best_move = {"x":-1,"y":-1}
 
         order = np.argsort(scores)[::-1]
 
@@ -172,22 +212,34 @@ async def predict_move(req:BoardRequest):
 
             if can_place(board,x,y,ai_color):
 
-                best_move = {"x":int(x),"y":int(y)}
-                break
+                logger.info(f"AI選択手 {x},{y}")
 
-        return best_move
+                return {"x":int(x),"y":int(y)}
+
+        logger.warning("合法手なし")
+
+        return {"x":-1,"y":-1}
 
     except Exception as e:
 
+        logger.error(f"predictエラー {e}")
+
         return {"error":str(e)}
 
+
+# ===============================
+# 状態確認
+# ===============================
 
 @app.get("/status")
 
 def status():
 
+    logger.info("status確認")
+
     return {
 
-        "loaded_models":model_shapes
+        "loaded_models":model_shapes,
+        "model_count":len(model_shapes)
 
     }
