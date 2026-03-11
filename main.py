@@ -23,6 +23,7 @@ MODEL_DIR = "models"
 
 sessions = {}
 model_shapes = {}
+model_inputs = {}
 
 # ===============================
 # モデル読み込み
@@ -47,19 +48,19 @@ for filename in os.listdir(MODEL_DIR):
                 providers=["CPUExecutionProvider"]
             )
 
-            shape = sess.get_inputs()[0].shape
+            input_info = sess.get_inputs()[0]
 
             sessions[key] = sess
-            model_shapes[key] = shape
+            model_shapes[key] = input_info.shape
+            model_inputs[key] = input_info.name
 
-            logger.info(f"[成功] {key} shape={shape}")
+            logger.info(f"[成功] {key} shape={input_info.shape}")
 
         except Exception as e:
 
             logger.error(f"[失敗] {filename} {e}")
 
 logger.info("=== モデル読み込み完了 ===")
-
 
 # ===============================
 # API入力
@@ -68,7 +69,6 @@ logger.info("=== モデル読み込み完了 ===")
 class BoardRequest(BaseModel):
     model_key: str
     board: list[list[int]]
-
 
 DIR = [
 (-1,-1),(-1,0),(-1,1),
@@ -140,15 +140,13 @@ def extract_extra_features(board,ai):
 # ===============================
 
 @app.post("/predict")
-
 async def predict_move(req:BoardRequest):
 
     try:
 
         logger.info(f"predict呼び出し model={req.model_key}")
 
-        # 盤面作成
-        board = np.array(req.board,dtype=np.float32)
+        board = np.array(req.board,dtype=np.int8)
 
         logger.info("\n盤面\n" + str(board))
 
@@ -157,11 +155,18 @@ async def predict_move(req:BoardRequest):
             logger.error("モデルが存在しません")
             raise HTTPException(status_code=400,detail="モデルがありません")
 
-        # 盤面サイズチェック
         if board.shape != (8,8):
 
             logger.error(f"盤面サイズエラー {board.shape}")
             raise HTTPException(status_code=400,detail="盤面は8x8必要")
+
+        # 盤面値チェック
+        if not np.isin(board,[-1,0,1]).all():
+
+            raise HTTPException(
+                status_code=400,
+                detail="盤面値は -1 0 1 のみ"
+            )
 
         board = board.copy()
 
@@ -195,11 +200,10 @@ async def predict_move(req:BoardRequest):
 
         outputs = sess.run(
             None,
-            {sess.get_inputs()[0].name:input_tensor.astype(np.float32)}
+            {model_inputs[req.model_key]:input_tensor.astype(np.float32)}
         )
 
-        scores = outputs[0]
-        scores = np.array(scores).flatten()
+        scores = np.array(outputs[0]).flatten()
 
         scores = np.nan_to_num(scores,-9999)
 
@@ -208,22 +212,61 @@ async def predict_move(req:BoardRequest):
             logger.error(f"AI出力サイズ異常 {len(scores)}")
             return {"x":-1,"y":-1}
 
-        # 高い順
+        # =========================
+        # 角優先
+        # =========================
+
+        corners = [(0,0),(0,7),(7,0),(7,7)]
+
+        for x,y in corners:
+
+            if can_place(board,x,y,ai_color):
+
+                logger.info(f"角取得 {x},{y}")
+
+                return {"x":x,"y":y}
+
+        # =========================
+        # AI候補
+        # =========================
+
         order = np.argsort(scores)[::-1]
 
-        # ★ AI候補ログ
         logger.info(f"AI上位候補 index {order[:5]}")
+
+        X_SQUARES = [(1,1),(1,6),(6,1),(6,6)]
 
         for idx in order:
 
+            if idx < 0 or idx >= 64:
+                continue
+
             x = idx // 8
             y = idx % 8
+
+            if (x,y) in X_SQUARES:
+                continue
 
             if can_place(board,x,y,ai_color):
 
                 logger.info(f"AI選択手 {x},{y}")
 
                 return {"x":int(x),"y":int(y)}
+
+        # =========================
+        # fallback
+        # =========================
+
+        logger.warning("AI候補失敗 fallback開始")
+
+        for x in range(8):
+            for y in range(8):
+
+                if can_place(board,x,y,ai_color):
+
+                    logger.info(f"fallback手 {x},{y}")
+
+                    return {"x":x,"y":y}
 
         logger.warning("合法手なし")
 
@@ -233,14 +276,14 @@ async def predict_move(req:BoardRequest):
 
         logger.error(f"predictエラー {e}")
 
-        return {"error":str(e)}
+        raise HTTPException(status_code=500,detail=str(e))
+
 
 # ===============================
 # 状態確認
 # ===============================
 
 @app.get("/status")
-
 def status():
 
     logger.info("status確認")
@@ -251,4 +294,3 @@ def status():
         "model_count":len(model_shapes)
 
     }
-
