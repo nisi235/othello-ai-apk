@@ -6,10 +6,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# ===============================
-# ログ設定（Renderログに表示）
-# ===============================
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("othello-ai")
 
@@ -46,8 +42,6 @@ for filename in os.listdir(MODEL_DIR):
 
         try:
 
-            logger.info(f"読み込み中: {filename}")
-
             sess = ort.InferenceSession(
                 path,
                 providers=["CPUExecutionProvider"]
@@ -62,7 +56,7 @@ for filename in os.listdir(MODEL_DIR):
 
         except Exception as e:
 
-            logger.error(f"[失敗] {filename} エラー={e}")
+            logger.error(f"[失敗] {filename} {e}")
 
 logger.info("=== モデル読み込み完了 ===")
 
@@ -82,9 +76,8 @@ DIR = [
 (1,-1),(1,0),(1,1)
 ]
 
-
 # ===============================
-# オセロ合法手判定
+# 合法手判定
 # ===============================
 
 def can_place(board,x,y,color):
@@ -161,10 +154,14 @@ async def predict_move(req:BoardRequest):
 
         board = np.array(req.board,dtype=np.float32)
 
+        # 盤面サイズチェック
         if board.shape != (8,8):
 
             logger.error(f"盤面サイズエラー {board.shape}")
             raise HTTPException(status_code=400,detail="盤面は8x8必要")
+
+        # 念のためコピー
+        board = board.copy()
 
         sess = sessions[req.model_key]
         shape = model_shapes[req.model_key]
@@ -193,7 +190,6 @@ async def predict_move(req:BoardRequest):
 
         else:
 
-            logger.error(f"未対応shape {shape}")
             raise Exception(f"未対応入力shape {shape}")
 
         outputs = sess.run(
@@ -201,8 +197,22 @@ async def predict_move(req:BoardRequest):
             {sess.get_inputs()[0].name:input_tensor.astype(np.float32)}
         )
 
-        scores = outputs[0].flatten()
+        scores = outputs[0]
 
+        # shapeを安全に変換
+        scores = np.array(scores).flatten()
+
+        # NaN対策
+        scores = np.nan_to_num(scores,-9999)
+
+        # 出力サイズ確認
+        if len(scores) != 64:
+
+            logger.error(f"AI出力サイズ異常 {len(scores)}")
+
+            return {"x":-1,"y":-1}
+
+        # 高い順
         order = np.argsort(scores)[::-1]
 
         for idx in order:
