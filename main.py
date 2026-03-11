@@ -80,27 +80,32 @@ DIR = [
 # 合法手判定
 # ===============================
 
-def can_place(board,x,y,color):
+def can_place(board, x, y, color):
 
     if board[x][y] != 0:
         return False
 
-    for dx,dy in DIR:
+    for dx, dy in DIR:
 
         nx = x + dx
         ny = y + dy
+        found_enemy = False
 
-        found = False
+        while 0 <= nx < 8 and 0 <= ny < 8:
 
-        while 0<=nx<8 and 0<=ny<8 and board[nx][ny] == -color:
+            if board[nx][ny] == -color:
+                found_enemy = True
+
+            elif board[nx][ny] == color:
+                if found_enemy:
+                    return True
+                break
+
+            else:
+                break
 
             nx += dx
             ny += dy
-            found = True
-
-        if found and 0<=nx<8 and 0<=ny<8 and board[nx][ny] == color:
-
-            return True
 
     return False
 
@@ -294,3 +299,4 @@ def status():
         "model_count":len(model_shapes)
 
     }
+
