@@ -147,12 +147,15 @@ async def predict_move(req:BoardRequest):
 
         logger.info(f"predict呼び出し model={req.model_key}")
 
+        # 盤面作成
+        board = np.array(req.board,dtype=np.float32)
+
+        logger.info("\n盤面\n" + str(board))
+
         if req.model_key not in sessions:
 
             logger.error("モデルが存在しません")
             raise HTTPException(status_code=400,detail="モデルがありません")
-
-        board = np.array(req.board,dtype=np.float32)
 
         # 盤面サイズチェック
         if board.shape != (8,8):
@@ -160,7 +163,6 @@ async def predict_move(req:BoardRequest):
             logger.error(f"盤面サイズエラー {board.shape}")
             raise HTTPException(status_code=400,detail="盤面は8x8必要")
 
-        # 念のためコピー
         board = board.copy()
 
         sess = sessions[req.model_key]
@@ -181,7 +183,6 @@ async def predict_move(req:BoardRequest):
         elif len(shape)==2 and shape[1]==67:
 
             features = extract_extra_features(board,ai_color)
-
             input_tensor = np.concatenate([flat,features]).reshape(1,67)
 
         elif len(shape)==4:
@@ -198,22 +199,20 @@ async def predict_move(req:BoardRequest):
         )
 
         scores = outputs[0]
-
-        # shapeを安全に変換
         scores = np.array(scores).flatten()
 
-        # NaN対策
         scores = np.nan_to_num(scores,-9999)
 
-        # 出力サイズ確認
         if len(scores) != 64:
 
             logger.error(f"AI出力サイズ異常 {len(scores)}")
-
             return {"x":-1,"y":-1}
 
         # 高い順
         order = np.argsort(scores)[::-1]
+
+        # ★ AI候補ログ
+        logger.info(f"AI上位候補 index {order[:5]}")
 
         for idx in order:
 
@@ -236,7 +235,6 @@ async def predict_move(req:BoardRequest):
 
         return {"error":str(e)}
 
-
 # ===============================
 # 状態確認
 # ===============================
@@ -253,3 +251,4 @@ def status():
         "model_count":len(model_shapes)
 
     }
+
