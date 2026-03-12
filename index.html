@@ -20,18 +20,19 @@
       background-color: black;
       padding: 5px;
       border-radius: 8px;
-      box-shadow: 0 0 15px rgba(0,0,0,0.5);
+      box-shadow: 0 0 10px #004400;
       user-select: none;
     }
     .cell {
       width: 50px;
       height: 50px;
       background-color: #0a7f0a;
-      border-radius: 2px;
+      border-radius: 5px;
       cursor: pointer;
       position: relative;
       box-sizing: border-box;
       border: 1px solid #004400;
+      transition: background-color 0.2s ease;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -39,36 +40,32 @@
     .cell:hover {
       background-color: #0f9f0f;
     }
-    
-    /* 石のデザイン */
+
+    /* 石のスタイル */
     .cell.black::after,
     .cell.white::after {
       content: "";
       position: absolute;
-      width: 40px;
-      height: 40px;
+      top: 7px;
+      left: 7px;
+      width: 36px;
+      height: 36px;
       border-radius: 50%;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+      box-shadow: 0 0 5px rgba(0,0,0,0.5);
       z-index: 2;
     }
-    .cell.black::after { background-color: #222; }
-    .cell.white::after { 
-      background-color: #fff; 
-      border: 1px solid #ccc;
-    }
+    .cell.black::after { background-color: black; }
+    .cell.white::after { background-color: white; border: 1px solid #000; }
 
-    /* 置ける場所のガイド表示 */
-    .cell.can-move::before {
+    /* 【追加】置ける場所の白い点（ヒント） */
+    .cell.hint::before {
       content: "";
-      width: 12px;
-      height: 12px;
-      background-color: rgba(255, 255, 255, 0.3);
+      width: 10px;
+      height: 10px;
+      background-color: rgba(255, 255, 255, 0.6); /* 白い点（透明度あり） */
       border-radius: 50%;
       z-index: 1;
       pointer-events: none;
-    }
-    .cell.black.can-move::before, .cell.white.can-move::before {
-      display: none; /* すでに石がある場所には表示しない */
     }
 
     #controls {
@@ -76,17 +73,14 @@
       display: flex;
       align-items: center;
       gap: 15px;
-      background: rgba(0,0,0,0.3);
-      padding: 10px 20px;
-      border-radius: 20px;
     }
     #aiSelect { font-size: 16px; padding: 4px 8px; }
     #passButton { font-size: 16px; padding: 6px 12px; cursor: pointer; }
     #status {
-      margin-top: 15px;
+      margin-top: 10px;
       font-size: 18px;
       color: white;
-      font-weight: bold;
+      height: 24px;
     }
   </style>
 </head>
@@ -94,15 +88,15 @@
   <div id="board"></div>
 
   <div id="controls">
-    <label for="aiSelect" style="color:white;">AIモデル:</label>
+    <label for="aiSelect" style="color:white;">AIレベル選択:</label>
     <select id="aiSelect">
-      <option value="ai1">Level 1</option>
-      <option value="ai2">Level 2</option>
-      <option value="ai3">Level 3</option>
-      <option value="ai4">Level 4</option>
-      <option value="ai5">Level 5</option>
-      <option value="ai6">Level 6</option>
-      <option value="ai7" selected>Level 7 (Monster)</option>
+      <option value="ai1">AI レベル 1</option>
+      <option value="ai2">AI レベル 2</option>
+      <option value="ai3">AI レベル 3</option>
+      <option value="ai4">AI レベル 4</option>
+      <option value="ai5">AI レベル 5</option>
+      <option value="ai6">AI レベル 6</option>
+      <option value="ai7" selected>AI レベル 7</option>
     </select>
     <button id="passButton">パス</button>
   </div>
@@ -112,15 +106,18 @@
   <script>
     const BOARD_SIZE = 8;
     let board = Array.from({length: BOARD_SIZE}, () => Array(BOARD_SIZE).fill(0));
-    let currentPlayer = 1; // 1=黒, -1=白
+    let currentPlayer = 1; // 1=黒(プレイヤー), -1=白(AI)
     const apiUrl = "https://othello-ai-apk.onrender.com/predict"; 
-    
     const aiSelect = document.getElementById("aiSelect");
     const passButton = document.getElementById("passButton");
     const statusDiv = document.getElementById("status");
 
     function initializeBoard() {
-      board = Array.from({length: BOARD_SIZE}, () => Array(BOARD_SIZE).fill(0));
+      for (let y = 0; y < BOARD_SIZE; y++) {
+        for (let x = 0; x < BOARD_SIZE; x++) {
+          board[y][x] = 0;
+        }
+      }
       board[3][3] = -1; board[3][4] = 1;
       board[4][3] = 1;  board[4][4] = -1;
     }
@@ -137,15 +134,16 @@
           if (board[y][x] === 1) cell.classList.add("black");
           else if (board[y][x] === -1) cell.classList.add("white");
 
-          // ガイド表示: 自分のターンで、かつ置ける場所なら
-          if (currentPlayer === 1 && canPlace(x, y, 1)) {
-            cell.classList.add("can-move");
+          // --- 修正：プレイヤーの番かつ置ける場所に白い点を表示 ---
+          if (currentPlayer === 1 && canPlace(x, y, currentPlayer)) {
+            cell.classList.add("hint"); // 白い点のクラスを付与
+            cell.style.cursor = "pointer";
             cell.onclick = () => {
-              if (placePiece(x, y, 1)) {
+              if (placePiece(x, y, currentPlayer)) {
                 currentPlayer = -1;
                 renderBoard();
-                updateStatus("AIが思考中...");
-                setTimeout(aiMove, 600);
+                updateStatus("AIの手を考えています...");
+                setTimeout(aiMove, 300);
               }
             };
           } else {
@@ -158,11 +156,14 @@
       updateStatus();
     }
 
+    // 既存の判定ロジック（そのまま）
     function canPlace(x, y, color) {
       if (board[y][x] !== 0) return false;
-      const directions = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]];
+      const directions = [[1,0], [-1,0], [0,1], [0,-1], [1,1], [-1,-1], [1,-1], [-1,1]];
       for (const [dx, dy] of directions) {
-        let nx = x + dx, ny = y + dy, foundOpponent = false;
+        let nx = x + dx;
+        let ny = y + dy;
+        let foundOpponent = false;
         while (nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE) {
           if (board[ny][nx] === -color) {
             foundOpponent = true;
@@ -179,7 +180,7 @@
     function placePiece(x, y, color) {
       if (!canPlace(x, y, color)) return false;
       board[y][x] = color;
-      const directions = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]];
+      const directions = [[1,0], [-1,0], [0,1], [0,-1], [1,1], [-1,-1], [1,-1], [-1,1]];
       for (const [dx, dy] of directions) {
         let nx = x + dx, ny = y + dy, toFlip = [];
         while (nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE && board[ny][nx] === -color) {
@@ -196,12 +197,11 @@
     async function aiMove() {
       if (!hasValidMoves(-1)) {
         if (!hasValidMoves(1)) return endGame();
-        alert("AIがパスしました。あなたの番です。");
+        alert("AIはパスしました。あなたの手番です。");
         currentPlayer = 1;
         renderBoard();
         return;
       }
-
       try {
         const response = await fetch(apiUrl, {
           method: "POST",
@@ -209,29 +209,28 @@
           body: JSON.stringify({
             model_key: aiSelect.value,
             board: board,
-            ai_color: -1  // AIの色を明示
+            ai_color: -1
           }),
         });
         const data = await response.json();
-        
-        // main.pyが返す座標で石を置く
         if (data.x !== -1 && placePiece(data.x, data.y, -1)) {
           currentPlayer = 1;
           renderBoard();
           if (!hasValidMoves(1)) {
             if (!hasValidMoves(-1)) return endGame();
-            alert("あなたはパスです。AIが続けて打ちます。");
+            alert("あなたはパスしました。AIの手番です。");
             currentPlayer = -1;
-            setTimeout(aiMove, 800);
+            renderBoard();
+            setTimeout(aiMove, 500);
           }
         } else {
-          // AIがパス、または無効な手の場合
           currentPlayer = 1;
           renderBoard();
         }
       } catch (e) {
-        console.error(e);
-        updateStatus("通信エラーが発生しました。");
+        alert("AIとの通信に失敗しました。");
+        currentPlayer = 1;
+        renderBoard();
       }
     }
 
@@ -242,23 +241,28 @@
       return false;
     }
 
-    function updateStatus(msg) {
-      if (msg) { statusDiv.textContent = msg; return; }
-      let b = 0, w = 0;
-      board.forEach(row => row.forEach(v => { if(v===1) b++; if(v===-1) w++; }));
-      statusDiv.textContent = `黒: ${b}  白: ${w}  (${currentPlayer === 1 ? "あなたの番" : "AIの番"})`;
+    function countStones() {
+      let black = 0, white = 0;
+      board.forEach(row => row.forEach(v => { if(v===1) black++; else if(v===-1) white++; }));
+      return {black, white};
+    }
+
+    function updateStatus(message) {
+      if(message) { statusDiv.textContent = message; return; }
+      const {black, white} = countStones();
+      statusDiv.textContent = `黒: ${black}  白: ${white}  現在の手番: ${currentPlayer === 1 ? "あなた" : "AI"}`;
     }
 
     function endGame() {
-      let b = 0, w = 0;
-      board.forEach(row => row.forEach(v => { if(v===1) b++; if(v===-1) w++; }));
-      alert(`ゲーム終了！\nあなた: ${b}\nAI: ${w}\n\n${b > w ? "あなたの勝ち！" : "AIの勝ち！"}`);
+      const {black, white} = countStones();
+      let msg = `ゲーム終了！\nあなた: ${black}  AI: ${white}\n\n`;
+      msg += black > white ? "あなたの勝ちです！ 🎉" : black < white ? "AIの勝ちです..." : "引き分けです。";
+      alert(msg);
       initializeBoard(); currentPlayer = 1; renderBoard();
     }
 
     passButton.onclick = () => {
-      if (currentPlayer !== 1) return;
-      if (hasValidMoves(1)) return alert("まだ置ける場所があります！");
+      if (currentPlayer !== 1 || hasValidMoves(1)) return;
       currentPlayer = -1; renderBoard(); setTimeout(aiMove, 500);
     };
 
