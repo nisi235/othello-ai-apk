@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("monster-ultra")
+logger = logging.getLogger("monster-ultra-v3")
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -18,8 +18,6 @@ sessions = {}
 model_shapes = {}
 model_inputs = {}
 
-# 盤面評価テーブル (Positional Evaluation)
-# 世界中のAIでベースとされる重み。角を100点、その隣を-50点など。
 WEIGHT_MATRIX = np.array([
     [ 120, -20,  20,   5,   5,  20, -20, 120],
     [ -20, -40,  -5,  -5,  -5,  -5, -40, -20],
@@ -48,11 +46,11 @@ if os.path.exists(MODEL_DIR):
 class BoardRequest(BaseModel):
     model_key: str
     board: list[list[int]]
-    ai_color: int = -1 # 1:黒, -1:白
+    ai_color: int = -1
 
-# --- ヘルパー関数 ---
+# --- ロジック関数 ---
+
 def get_valid_moves_full(board, player):
-    """合法手とその手でひっくり返る石のリストを返す"""
     moves = {}
     for r in range(8):
         for c in range(8):
@@ -79,6 +77,36 @@ def simulate_move(board, move, flipped, player):
         new_board[fr][fc] = player
     return new_board
 
+def count_stable_discs(board, player):
+    """確定石（二度とひっくり返されない石）を数える"""
+    stable = 0
+    # 簡易的に4隅から繋がっている石をチェック
+    for r, c in CORNERS:
+        if board[r][c] == player:
+            stable += 1
+            # 辺に沿ってどこまで自色が続いているかチェック（簡易版）
+            # ここに詳細な探索を入れるとさらに強くなります
+    return stable
+
+def evaluate_board_total(board, ai_color, ai_scores_raw):
+    """盤面の総合評価（AI推論 + 静的ロジック）"""
+    empty_cells = np.count_nonzero(board == 0)
+    
+    # 1. 重みテーブル評価
+    pos_score = np.sum(board * ai_color * WEIGHT_MATRIX)
+    
+    # 2. 確定石ボーナス
+    stable_score = count_stable_discs(board, ai_color) * 50
+    
+    # 3. 機動力評価（相手の打てる場所が少ないほど良い）
+    opp_moves = len(get_valid_moves_full(board, -ai_color))
+    mobility_score = -opp_moves * 15
+    
+    # 4. 偶数理論（最後の手を打てるか）
+    parity_score = 20 if empty_cells % 2 == 0 else 0
+
+    return pos_score + stable_score + mobility_score + parity_score
+
 @app.post("/predict")
 async def predict_move(req: BoardRequest):
     try:
@@ -89,66 +117,49 @@ async def predict_move(req: BoardRequest):
         if not valid_moves_dict:
             return {"x": -1, "y": -1}
 
-        # 1. 【超優先】角が取れるなら即決 (AIの計算を待たない)
-        for r, c in valid_moves_dict.keys():
-            if (r, c) in CORNERS:
-                logger.info(f"Corner Take: {r},{c}")
-                return {"x": int(c), "y": int(r)}
+        # --- 【2手読み Minimax】 ---
+        best_move = None
+        max_eval = -float('inf')
 
-        # 2. AI推論実行 (ai7.onnx)
+        # AIの生スコアを取得
         sess = sessions.get(req.model_key)
-        if not sess: raise HTTPException(status_code=400, detail="Model Not Found")
-        
         input_data = (board * ai_color).astype(np.float32)
-        shape = model_shapes[req.model_key]
-        outputs = sess.run(None, {model_inputs[req.model_key]: input_data.reshape(shape)})
+        outputs = sess.run(None, {model_inputs[req.model_key]: input_data.reshape(model_shapes[req.model_key])})
         ai_scores = np.array(outputs[0]).flatten()
 
-        # 3. 各合法手の評価 (AIスコア + 戦略ロジック)
-        best_move = None
-        highest_score = -float('inf')
-        empty_cells = np.count_nonzero(board == 0)
-
         for (r, c), flipped in valid_moves_dict.items():
-            # (A) AI推論ベーススコア
-            current_score = ai_scores[r * 8 + c] * 2.0
+            # 1手目：自分が打つ
+            board_after_me = simulate_move(board, (r, c), flipped, ai_color)
             
-            # (B) 盤面位置の価値加算
-            current_score += WEIGHT_MATRIX[r][c]
-            
-            # (C) 相手の機動力奪取 (相手の次手の数を減らす)
-            future_board = simulate_move(board, (r, c), flipped, ai_color)
-            opp_moves_count = len(get_valid_moves_full(future_board, -ai_color))
-            current_score -= opp_moves_count * 10.0 # 相手の手を縛る
-
-            # (D) 開放度理論 (周囲に空きマスがある石をひっくり返すのを避ける)
-            # 中盤までは石を内側に閉じ込めるほうが強い
-            if empty_cells > 15:
-                liberty_penalty = 0
-                for fr, fc in flipped:
-                    for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
-                        nr, nc = fr+dr, fc+dc
-                        if 0 <= nr < 8 and 0 <= nc < 8 and board[nr][nc] == 0:
-                            liberty_penalty += 1
-                current_score -= liberty_penalty * 8.0
-
-            # (E) 自滅回避 (角が取られていないのにXに打つ手を重罰)
+            # X打ちペナルティ（即時）
+            penalty = 0
             if (r, c) in X_SQUARES:
-                # 対応する角が自分のものor相手のものでない(=空)なら、絶対打たない
-                # 角のインデックスを特定
                 cr, cc = (0 if r < 4 else 7), (0 if c < 4 else 7)
-                if board[cr][cc] == 0:
-                    current_score -= 5000.0
+                if board[cr][cc] == 0: penalty = -5000
 
-            if current_score > highest_score:
-                highest_score = current_score
+            # 2手目：相手の最善の返しを想定
+            opp_moves = get_valid_moves_full(board_after_me, -ai_color)
+            if opp_moves:
+                min_eval_for_me = float('inf')
+                for orr, occ in opp_moves.keys():
+                    # 相手が角を取れる手があるなら、このルートの評価は最低
+                    if (orr, occ) in CORNERS:
+                        min_eval_for_me = -10000
+                        break
+                    # 本来はここで再帰的に計算するが、速度優先で簡易評価
+                    eval_val = evaluate_board_total(board_after_me, ai_color, ai_scores)
+                    if eval_val < min_eval_for_me:
+                        min_eval_for_me = eval_val
+                current_total_score = min_eval_for_me + (ai_scores[r*8+c] * 10) + penalty
+            else:
+                # 相手がパスになる場合は最高！
+                current_total_score = 10000 + penalty
+
+            if current_total_score > max_eval:
+                max_eval = current_total_score
                 best_move = (r, c)
 
-        # 決定手 (x=Col, y=Row)
-        final_r, final_c = best_move
-        logger.info(f"Final Move: Row={final_r}, Col={final_c} | Score={highest_score}")
-
-        return {"x": int(final_c), "y": int(final_r)}
+        return {"x": int(best_move[1]), "y": int(best_move[0])}
 
     except Exception as e:
         logger.error(f"Error: {e}")
@@ -156,4 +167,4 @@ async def predict_move(req: BoardRequest):
 
 @app.get("/status")
 def status():
-    return {"models": list(sessions.keys()), "engine": "Monster Ultra V2"}
+    return {"engine": "Monster Ultra V3 (Minimax + Parity)"}
