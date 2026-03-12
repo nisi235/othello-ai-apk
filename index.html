@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>オセロ</title>
+  <title>オセロ - Monster Ultra V8</title>
   <style>
     body {
       display: flex;
@@ -57,12 +57,24 @@
     .cell.black::after { background-color: black; }
     .cell.white::after { background-color: white; border: 1px solid #000; }
 
-    /* 【追加】置ける場所の白い点（ヒント） */
+    /* 【追加】最後に置いた石のマーカー（金色の点） */
+    .cell.last-move::before {
+      content: "";
+      width: 12px;
+      height: 12px;
+      background-color: #ffd700; /* ゴールド */
+      border-radius: 50%;
+      z-index: 10; /* 石(after)より上に表示 */
+      position: absolute;
+      box-shadow: 0 0 4px rgba(0,0,0,0.8);
+      border: 1px solid #000;
+    }
+
     .cell.hint::before {
       content: "";
       width: 10px;
       height: 10px;
-      background-color: rgba(255, 255, 255, 0.6); /* 白い点（透明度あり） */
+      background-color: rgba(255, 255, 255, 0.4);
       border-radius: 50%;
       z-index: 1;
       pointer-events: none;
@@ -106,7 +118,8 @@
   <script>
     const BOARD_SIZE = 8;
     let board = Array.from({length: BOARD_SIZE}, () => Array(BOARD_SIZE).fill(0));
-    let currentPlayer = 1; // 1=黒(プレイヤー), -1=白(AI)
+    let currentPlayer = 1; 
+    let lastMove = {x: -1, y: -1}; // 【追加】最後の手を保持
     const apiUrl = "https://othello-ai-apk.onrender.com/predict"; 
     const aiSelect = document.getElementById("aiSelect");
     const passButton = document.getElementById("passButton");
@@ -119,7 +132,8 @@
         }
       }
       board[3][3] = -1; board[3][4] = 1;
-      board[4][3] = 1;  board[4][4] = -1;
+      board[4][3] = 1; board[4][4] = -1;
+      lastMove = {x: -1, y: -1}; // リセット
     }
 
     function renderBoard() {
@@ -134,44 +148,38 @@
           if (board[y][x] === 1) cell.classList.add("black");
           else if (board[y][x] === -1) cell.classList.add("white");
 
-          // --- 修正：プレイヤーの番かつ置ける場所に白い点を表示 ---
+          // 【追加】最後の手であればハイライトクラスを付与
+          if (lastMove.x === x && lastMove.y === y) {
+            cell.classList.add("last-move");
+          }
+
           if (currentPlayer === 1 && canPlace(x, y, currentPlayer)) {
-            cell.classList.add("hint"); // 白い点のクラスを付与
-            cell.style.cursor = "pointer";
+            cell.classList.add("hint");
             cell.onclick = () => {
               if (placePiece(x, y, currentPlayer)) {
+                lastMove = {x, y}; // プレイヤーの手を記録
                 currentPlayer = -1;
                 renderBoard();
-                updateStatus("AIの手を考えています...");
+                updateStatus("AIが思考中...");
                 setTimeout(aiMove, 300);
               }
             };
-          } else {
-            cell.style.cursor = "default";
           }
-
           boardDiv.appendChild(cell);
         }
       }
       updateStatus();
     }
 
-    // 既存の判定ロジック（そのまま）
     function canPlace(x, y, color) {
       if (board[y][x] !== 0) return false;
       const directions = [[1,0], [-1,0], [0,1], [0,-1], [1,1], [-1,-1], [1,-1], [-1,1]];
       for (const [dx, dy] of directions) {
-        let nx = x + dx;
-        let ny = y + dy;
-        let foundOpponent = false;
+        let nx = x + dx, ny = y + dy, foundOpponent = false;
         while (nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE) {
-          if (board[ny][nx] === -color) {
-            foundOpponent = true;
-            nx += dx; ny += dy;
-          } else if (board[ny][nx] === color) {
-            if (foundOpponent) return true;
-            break;
-          } else break;
+          if (board[ny][nx] === -color) { foundOpponent = true; nx += dx; ny += dy; }
+          else if (board[ny][nx] === color) { if (foundOpponent) return true; break; }
+          else break;
         }
       }
       return false;
@@ -184,8 +192,7 @@
       for (const [dx, dy] of directions) {
         let nx = x + dx, ny = y + dy, toFlip = [];
         while (nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE && board[ny][nx] === -color) {
-          toFlip.push([nx, ny]);
-          nx += dx; ny += dy;
+          toFlip.push([nx, ny]); nx += dx; ny += dy;
         }
         if (nx >= 0 && ny >= 0 && nx < BOARD_SIZE && ny < BOARD_SIZE && board[ny][nx] === color) {
           for (const [fx, fy] of toFlip) board[fy][fx] = color;
@@ -197,7 +204,7 @@
     async function aiMove() {
       if (!hasValidMoves(-1)) {
         if (!hasValidMoves(1)) return endGame();
-        alert("AIはパスしました。あなたの手番です。");
+        alert("AIは置ける場所がないためパスしました。");
         currentPlayer = 1;
         renderBoard();
         return;
@@ -213,22 +220,21 @@
           }),
         });
         const data = await response.json();
-        if (data.x !== -1 && placePiece(data.x, data.y, -1)) {
+        if (data.x !== -1) {
+          lastMove = {x: data.x, y: data.y}; // AIの手を記録
+          placePiece(data.x, data.y, -1);
           currentPlayer = 1;
           renderBoard();
           if (!hasValidMoves(1)) {
             if (!hasValidMoves(-1)) return endGame();
-            alert("あなたはパスしました。AIの手番です。");
+            alert("あなたはパスしました。");
             currentPlayer = -1;
             renderBoard();
             setTimeout(aiMove, 500);
           }
-        } else {
-          currentPlayer = 1;
-          renderBoard();
         }
       } catch (e) {
-        alert("AIとの通信に失敗しました。");
+        alert("AI通信エラー");
         currentPlayer = 1;
         renderBoard();
       }
@@ -250,13 +256,13 @@
     function updateStatus(message) {
       if(message) { statusDiv.textContent = message; return; }
       const {black, white} = countStones();
-      statusDiv.textContent = `黒: ${black}  白: ${white}  現在の手番: ${currentPlayer === 1 ? "あなた" : "AI"}`;
+      statusDiv.textContent = `黒(あなた): ${black}  白(AI): ${white}  手番: ${currentPlayer === 1 ? "あなた" : "AI"}`;
     }
 
     function endGame() {
       const {black, white} = countStones();
       let msg = `ゲーム終了！\nあなた: ${black}  AI: ${white}\n\n`;
-      msg += black > white ? "あなたの勝ちです！ 🎉" : black < white ? "AIの勝ちです..." : "引き分けです。";
+      msg += black > white ? "あなたの勝ち！" : black < white ? "AIの勝ち..." : "引き分け！";
       alert(msg);
       initializeBoard(); currentPlayer = 1; renderBoard();
     }
