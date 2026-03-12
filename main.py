@@ -6,7 +6,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# ログ設定
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("othello-ai")
 
@@ -26,129 +25,117 @@ model_shapes = {}
 model_inputs = {}
 
 # ===============================
-# モデル読み込み
+# モデル読み込み（ai7.onnx対応）
 # ===============================
 if not os.path.exists(MODEL_DIR):
     os.makedirs(MODEL_DIR)
 
-logger.info("=== モデル読み込み開始 ===")
 for filename in os.listdir(MODEL_DIR):
     if filename.endswith(".onnx"):
         key = filename.replace(".onnx", "")
         path = os.path.join(MODEL_DIR, filename)
         try:
             sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
-            input_info = sess.get_inputs()[0]
             sessions[key] = sess
-            model_shapes[key] = input_info.shape
-            model_inputs[key] = input_info.name
-            logger.info(f"[成功] {key} shape={input_info.shape}")
+            model_shapes[key] = sess.get_inputs()[0].shape
+            model_inputs[key] = sess.get_inputs()[0].name
+            logger.info(f"[成功] モデルロード: {key}")
         except Exception as e:
-            logger.error(f"[失敗] {filename} {e}")
-logger.info("=== モデル読み込み完了 ===")
+            logger.error(f"[失敗] {filename}: {e}")
 
-# ===============================
-# データ定義
-# ===============================
 class BoardRequest(BaseModel):
     model_key: str
     board: list[list[int]]
-    # AIの色（1:黒, -1:白）。リクエストにない場合は盤面の石の数から推論するロジックを入れます。
-    ai_color: int = -1 
+    # AIの色を明示的に受け取る。なければ-1（白）とする。
+    ai_color: int = -1
 
+# ===============================
+# 超厳格なルールエンジン
+# ===============================
 DIR = [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]
 
-# ===============================
-# ルールエンジン（合法手判定）
-# ===============================
-def get_valid_moves(board, player):
-    moves = []
-    for x in range(8):
-        for y in range(8):
-            if board[x, y] != 0: continue
-            for dx, dy in DIR:
-                nx, ny = x + dx, y + dy
-                found_enemy = False
-                while 0 <= nx < 8 and 0 <= ny < 8:
-                    if board[nx, ny] == -player:
-                        found_enemy = True
-                    elif board[nx, ny] == player:
-                        if found_enemy: moves.append((x, y))
+def get_strict_valid_moves(board, player):
+    valid_moves = []
+    for r in range(8):
+        for c in range(8):
+            if board[r][c] != 0: continue
+            for dr, dc in DIR:
+                nr, nc = r + dr, c + dc
+                found_opp = False
+                while 0 <= nr < 8 and 0 <= nc < 8:
+                    if board[nr][nc] == -player:
+                        found_opp = True
+                    elif board[nr][nc] == player:
+                        if found_opp: valid_moves.append((r, c))
                         break
                     else: break
-                    nx += dx
-                    ny += dy
-    return list(set(moves))
+                    nr += dr; nc += dc
+    return list(set(valid_moves))
 
 # ===============================
-# AI予測（メインロジック）
+# 予測エンドポイント
 # ===============================
 @app.post("/predict")
 async def predict_move(req: BoardRequest):
     try:
-        logger.info(f"--- predict呼び出し model={req.model_key} ---")
+        # 1. 盤面とAIの色の確定
         board = np.array(req.board, dtype=np.int8)
-        ai_color = req.ai_color # フロントから送られてきたAIの色
-
-        # 1. まず「ルール上の合法手」をリストアップ
-        valid_list = get_valid_moves(board, ai_color)
+        ai_color = req.ai_color
         
-        if not valid_list:
-            logger.warning("合法手なし（パス）")
+        # 2. 合法手を先に計算（絶対にここからしか選ばない）
+        valid_moves = get_strict_valid_moves(board, ai_color)
+        
+        if not valid_moves:
+            logger.info("AI: 置ける場所がないのでパス")
             return {"x": -1, "y": -1}
 
-        # 2. モデル入力の準備
+        # 3. AI推論（ai7.onnxなどのモデル）
         if req.model_key not in sessions:
-            raise HTTPException(status_code=400, detail="モデル未ロード")
-
+            raise HTTPException(status_code=400, detail="Model not found")
+        
         sess = sessions[req.model_key]
         shape = model_shapes[req.model_key]
         
-        # AI視点に正規化（自分が1、相手が-1）
-        norm_board = board * ai_color
+        # AIが見る盤面（自分を1にする）
+        input_board = (board * ai_color).astype(np.float32)
         
-        # モデルの形に合わせる (1, 1, 8, 8)
-        if len(shape) == 4:
-            input_tensor = norm_board.reshape(1, 1, 8, 8).astype(np.float32)
-        else:
-            input_tensor = norm_board.flatten().reshape(1, 64).astype(np.float32)
+        if len(shape) == 4: # CNN形式 (1,1,8,8)
+            input_tensor = input_board.reshape(1, 1, 8, 8)
+        else: # Flatten形式 (1,64)
+            input_tensor = input_board.flatten().reshape(1, 64)
 
-        # 3. AI推論実行
         outputs = sess.run(None, {model_inputs[req.model_key]: input_tensor})
-        scores = np.array(outputs[0]).flatten() # 64マスのスコア
+        scores = np.array(outputs[0]).flatten()
 
-        # 4. 【最重要】合法手の中からスコアが最大のものを選ぶ
-        best_move = None
+        # 4. 合法手リストの中で、AIの評価が最も高いものを探す
+        best_r, best_c = -1, -1
         max_q = -float('inf')
 
-        # デバッグ用に上位候補をログ出し
-        order = np.argsort(scores)[::-1]
-        logger.info(f"AI上位候補スコア: {order[:5]}")
-
-        for move in valid_list:
-            x, y = move
-            idx = x * 8 + y
+        for r, c in valid_moves:
+            idx = r * 8 + c
             score = scores[idx]
-
-            # 角へのボーナス（必要に応じて）
-            if (x, y) in [(0,0), (0,7), (7,0), (7,7)]:
-                score += 10.0 # 学習が足りない場合の補助
+            
+            # 四隅ボーナス（ロジックの補強）
+            if (r, c) in [(0,0), (0,7), (7,0), (7,7)]:
+                score += 5.0
 
             if score > max_q:
                 max_q = score
-                best_move = move
+                best_r, best_c = r, c
 
-        if best_move:
-            logger.info(f"決定手: {best_move} (score: {max_q})")
-            return {"x": int(best_move[0]), "y": int(best_move[1])}
+        # 5. 返却（重要：x=横(col), y=縦(row) にマッピング）
+        # フロントエンドが x:横, y:縦 を期待している場合に合わせる
+        logger.info(f"AI決定: row={best_r}, col={best_c} (ai_color={ai_color})")
         
-        # 万が一選べなかった場合のフォールバック
-        return {"x": int(valid_list[0][0]), "y": int(valid_list[0][1])}
+        return {
+            "x": int(best_c), # 横方向
+            "y": int(best_r)  # 縦方向
+        }
 
     except Exception as e:
-        logger.error(f"Error in predict: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Predict Error: {e}")
+        return {"x": -1, "y": -1}
 
 @app.get("/status")
 def status():
-    return {"loaded_models": list(sessions.keys()), "model_count": len(sessions)}
+    return {"models": list(sessions.keys())}
