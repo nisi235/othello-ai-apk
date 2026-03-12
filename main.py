@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+# ログ設定
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("othello-ai")
 
@@ -20,7 +21,6 @@ app.add_middleware(
 )
 
 MODEL_DIR = "models"
-
 sessions = {}
 model_shapes = {}
 model_inputs = {}
@@ -28,275 +28,127 @@ model_inputs = {}
 # ===============================
 # モデル読み込み
 # ===============================
-
 if not os.path.exists(MODEL_DIR):
     os.makedirs(MODEL_DIR)
 
 logger.info("=== モデル読み込み開始 ===")
-
 for filename in os.listdir(MODEL_DIR):
-
     if filename.endswith(".onnx"):
-
         key = filename.replace(".onnx", "")
         path = os.path.join(MODEL_DIR, filename)
-
         try:
-
-            sess = ort.InferenceSession(
-                path,
-                providers=["CPUExecutionProvider"]
-            )
-
+            sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
             input_info = sess.get_inputs()[0]
-
             sessions[key] = sess
             model_shapes[key] = input_info.shape
             model_inputs[key] = input_info.name
-
             logger.info(f"[成功] {key} shape={input_info.shape}")
-
         except Exception as e:
-
             logger.error(f"[失敗] {filename} {e}")
-
 logger.info("=== モデル読み込み完了 ===")
 
 # ===============================
-# API入力
+# データ定義
 # ===============================
-
 class BoardRequest(BaseModel):
     model_key: str
     board: list[list[int]]
+    # AIの色（1:黒, -1:白）。リクエストにない場合は盤面の石の数から推論するロジックを入れます。
+    ai_color: int = -1 
 
-DIR = [
-(-1,-1),(-1,0),(-1,1),
-(0,-1),(0,1),
-(1,-1),(1,0),(1,1)
-]
+DIR = [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]
 
 # ===============================
-# 合法手判定
+# ルールエンジン（合法手判定）
 # ===============================
-
-def can_place(board, x, y, color):
-
-    if board[x][y] != 0:
-        return False
-
-    for dx, dy in DIR:
-
-        nx = x + dx
-        ny = y + dy
-        found_enemy = False
-
-        while 0 <= nx < 8 and 0 <= ny < 8:
-
-            if board[nx][ny] == -color:
-                found_enemy = True
-
-            elif board[nx][ny] == color:
-                if found_enemy:
-                    return True
-                break
-
-            else:
-                break
-
-            nx += dx
-            ny += dy
-
-    return False
-
+def get_valid_moves(board, player):
+    moves = []
+    for x in range(8):
+        for y in range(8):
+            if board[x, y] != 0: continue
+            for dx, dy in DIR:
+                nx, ny = x + dx, y + dy
+                found_enemy = False
+                while 0 <= nx < 8 and 0 <= ny < 8:
+                    if board[nx, ny] == -player:
+                        found_enemy = True
+                    elif board[nx, ny] == player:
+                        if found_enemy: moves.append((x, y))
+                        break
+                    else: break
+                    nx += dx
+                    ny += dy
+    return list(set(moves))
 
 # ===============================
-# 追加特徴量
+# AI予測（メインロジック）
 # ===============================
-
-def extract_extra_features(board,ai):
-
-    opp = -ai
-
-    piece_diff = np.sum(board==ai) - np.sum(board==opp)
-
-    weights = np.array([
-    [100,-20,10,5,5,10,-20,100],
-    [-20,-50,-2,-2,-2,-2,-50,-20],
-    [10,-2,5,1,1,5,-2,10],
-    [5,-2,1,0,0,1,-2,5],
-    [5,-2,1,0,0,1,-2,5],
-    [10,-2,5,1,1,5,-2,10],
-    [-20,-50,-2,-2,-2,-2,-50,-20],
-    [100,-20,10,5,5,10,-20,100]
-    ])
-
-    pos_score = np.sum(weights*(board==ai)) - np.sum(weights*(board==opp))
-
-    corners = [board[0,0],board[0,7],board[7,0],board[7,7]]
-
-    corner_score = corners.count(ai) - corners.count(opp)
-
-    return np.array([piece_diff,pos_score,corner_score],dtype=np.float32)
-
-
-# ===============================
-# AI予測
-# ===============================
-
 @app.post("/predict")
-async def predict_move(req:BoardRequest):
-
+async def predict_move(req: BoardRequest):
     try:
+        logger.info(f"--- predict呼び出し model={req.model_key} ---")
+        board = np.array(req.board, dtype=np.int8)
+        ai_color = req.ai_color # フロントから送られてきたAIの色
 
-        logger.info(f"predict呼び出し model={req.model_key}")
+        # 1. まず「ルール上の合法手」をリストアップ
+        valid_list = get_valid_moves(board, ai_color)
+        
+        if not valid_list:
+            logger.warning("合法手なし（パス）")
+            return {"x": -1, "y": -1}
 
-        board = np.array(req.board,dtype=np.int8)
-
-        logger.info("\n盤面\n" + str(board))
-
+        # 2. モデル入力の準備
         if req.model_key not in sessions:
-
-            logger.error("モデルが存在しません")
-            raise HTTPException(status_code=400,detail="モデルがありません")
-
-        if board.shape != (8,8):
-
-            logger.error(f"盤面サイズエラー {board.shape}")
-            raise HTTPException(status_code=400,detail="盤面は8x8必要")
-
-        # 盤面値チェック
-        if not np.isin(board,[-1,0,1]).all():
-
-            raise HTTPException(
-                status_code=400,
-                detail="盤面値は -1 0 1 のみ"
-            )
-
-        board = board.copy()
+            raise HTTPException(status_code=400, detail="モデル未ロード")
 
         sess = sessions[req.model_key]
         shape = model_shapes[req.model_key]
-
-        ai_color = -1
-
-        flat = (board * ai_color).flatten()
-
-        # =========================
-        # 入力自動判定
-        # =========================
-
-        if len(shape)==2 and shape[1]==64:
-
-            input_tensor = flat.reshape(1,64)
-
-        elif len(shape)==2 and shape[1]==67:
-
-            features = extract_extra_features(board,ai_color)
-            input_tensor = np.concatenate([flat,features]).reshape(1,67)
-
-        elif len(shape)==4:
-
-            input_tensor = (board * ai_color).reshape(1,1,8,8)
-
+        
+        # AI視点に正規化（自分が1、相手が-1）
+        norm_board = board * ai_color
+        
+        # モデルの形に合わせる (1, 1, 8, 8)
+        if len(shape) == 4:
+            input_tensor = norm_board.reshape(1, 1, 8, 8).astype(np.float32)
         else:
+            input_tensor = norm_board.flatten().reshape(1, 64).astype(np.float32)
 
-            raise Exception(f"未対応入力shape {shape}")
+        # 3. AI推論実行
+        outputs = sess.run(None, {model_inputs[req.model_key]: input_tensor})
+        scores = np.array(outputs[0]).flatten() # 64マスのスコア
 
-        outputs = sess.run(
-            None,
-            {model_inputs[req.model_key]:input_tensor.astype(np.float32)}
-        )
+        # 4. 【最重要】合法手の中からスコアが最大のものを選ぶ
+        best_move = None
+        max_q = -float('inf')
 
-        scores = np.array(outputs[0]).flatten()
-
-        scores = np.nan_to_num(scores,-9999)
-
-        if len(scores) != 64:
-
-            logger.error(f"AI出力サイズ異常 {len(scores)}")
-            return {"x":-1,"y":-1}
-
-        # =========================
-        # 角優先
-        # =========================
-
-        corners = [(0,0),(0,7),(7,0),(7,7)]
-
-        for x,y in corners:
-
-            if can_place(board,x,y,ai_color):
-
-                logger.info(f"角取得 {x},{y}")
-
-                return {"x":x,"y":y}
-
-        # =========================
-        # AI候補
-        # =========================
-
+        # デバッグ用に上位候補をログ出し
         order = np.argsort(scores)[::-1]
+        logger.info(f"AI上位候補スコア: {order[:5]}")
 
-        logger.info(f"AI上位候補 index {order[:5]}")
+        for move in valid_list:
+            x, y = move
+            idx = x * 8 + y
+            score = scores[idx]
 
-        X_SQUARES = [(1,1),(1,6),(6,1),(6,6)]
+            # 角へのボーナス（必要に応じて）
+            if (x, y) in [(0,0), (0,7), (7,0), (7,7)]:
+                score += 10.0 # 学習が足りない場合の補助
 
-        for idx in order:
+            if score > max_q:
+                max_q = score
+                best_move = move
 
-            if idx < 0 or idx >= 64:
-                continue
-
-            x = idx // 8
-            y = idx % 8
-
-            if (x,y) in X_SQUARES:
-                continue
-
-            if can_place(board,x,y,ai_color):
-
-                logger.info(f"AI選択手 {x},{y}")
-
-                return {"x":int(x),"y":int(y)}
-
-        # =========================
-        # fallback
-        # =========================
-
-        logger.warning("AI候補失敗 fallback開始")
-
-        for x in range(8):
-            for y in range(8):
-
-                if can_place(board,x,y,ai_color):
-
-                    logger.info(f"fallback手 {x},{y}")
-
-                    return {"x":x,"y":y}
-
-        logger.warning("合法手なし")
-
-        return {"x":-1,"y":-1}
+        if best_move:
+            logger.info(f"決定手: {best_move} (score: {max_q})")
+            return {"x": int(best_move[0]), "y": int(best_move[1])}
+        
+        # 万が一選べなかった場合のフォールバック
+        return {"x": int(valid_list[0][0]), "y": int(valid_list[0][1])}
 
     except Exception as e:
-
-        logger.error(f"predictエラー {e}")
-
-        raise HTTPException(status_code=500,detail=str(e))
-
-
-# ===============================
-# 状態確認
-# ===============================
+        logger.error(f"Error in predict: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/status")
 def status():
-
-    logger.info("status確認")
-
-    return {
-
-        "loaded_models":model_shapes,
-        "model_count":len(model_shapes)
-
-    }
-
+    return {"loaded_models": list(sessions.keys()), "model_count": len(sessions)}
